@@ -7,58 +7,59 @@ import "core:time"
 
 import "../coro"
 import "../storage"
-
-Sleep :: struct {
-	target_time: time.Time,
-	waker:       Waker,
-}
+import tw "../time_wheel"
 
 User_Data :: struct {
-	ctx:     runtime.Context,
-	sched:   ^Scheduler,
-	co:      ^coro.Coro,
-	fn:      proc(arg: rawptr),
-	arg:     rawptr,
-	task_id: u64,
-	queued:  bool,
+	ctx:    runtime.Context,
+	sched:  ^Scheduler,
+	co:     ^coro.Coro,
+	fn:     proc(arg: rawptr),
+	arg:    rawptr,
+	id:     u64,
+	queued: bool,
 }
 
 Waker :: struct {
-	sched:   ^Scheduler,
-	task_id: u64,
+	sched: ^Scheduler,
+	id:    u64,
 }
 
 wake :: proc(self: Waker) {
-	ud, ok := storage.get(&self.sched.slots, self.task_id)
+	ud, ok := storage.get(&self.sched.slots, self.id)
 	assert(ok, "invalid task id")
 
 	if !(ud^).queued {
 		(ud^).queued = true
-		queue.enqueue(&self.sched.ready, self.task_id)
+		queue.enqueue(&self.sched.ready, self.id)
 	}
 }
 
 Scheduler :: struct {
-	slots:    storage.Storage(^User_Data),
-	ready:    queue.Queue(u64),
-	sleeping: storage.Storage(Sleep),
+	slots:      storage.Storage(^User_Data),
+	ready:      queue.Queue(u64),
+	sleeping:   storage.Storage(Waker),
+	time_wheel: tw.Time_Wheel,
+	finished:   [dynamic]tw.Task,
 }
 
 init :: proc(self: ^Scheduler) {
 	storage.init(&self.slots, 1024)
 	queue.init(&self.ready)
 	storage.init(&self.sleeping, 1024)
+
+	tw.init(&self.time_wheel, 1 * time.Millisecond)
+	self.finished = make([dynamic]tw.Task)
 }
 
 deinit :: proc(self: ^Scheduler) {
-	count := 0
-	iter := storage.iter(&self.slots)
-	for _, _ in storage.iterate(&iter) do count += 1
-	assert(count == 0, "scheduler has pending tasks")
+	assert(storage.count(&self.slots) == 0, "scheduler has pending tasks")
 
 	storage.deinit(&self.slots)
 	queue.destroy(&self.ready)
 	storage.deinit(&self.sleeping)
+
+	tw.deinit(&self.time_wheel)
+	delete(self.finished)
 }
 
 poll :: proc(self: ^Scheduler) {
@@ -79,14 +80,15 @@ poll :: proc(self: ^Scheduler) {
 		}
 	}
 
-	now := time.now()
-	iter := storage.iter(&self.sleeping)
-	for id, sleep in storage.iterate(&iter) {
-		if time.diff(now, sleep.target_time) <= 0 {
-			wake(sleep.waker)
-			storage.remove(&self.sleeping, id)
+	tw.spin(&self.time_wheel, &self.finished)
+	if len(self.finished) > 0 {
+		for id in self.finished {
+			waker, ok := storage.remove(&self.sleeping, id)
+			assert(ok, "invalid task")
+			wake(waker)
 		}
 	}
+	clear(&self.finished)
 }
 
 spawn :: proc(
@@ -102,7 +104,7 @@ spawn :: proc(
 	ud.sched = self
 	ud.co = new(coro.Coro)
 	ud.fn = fn
-	ud.task_id = storage.get_id(&entry)
+	ud.id = storage.get_id(&entry)
 	ud.arg = arg
 
 	storage.insert(&entry, ud)
@@ -122,14 +124,16 @@ spawn :: proc(
 	desc.storage_size = 0
 
 	coro.check(coro.create(&ud.co, &desc))
-	queue.enqueue(&self.ready, ud.task_id)
+	queue.enqueue(&self.ready, ud.id)
 }
 
 sleep :: proc(n: time.Duration) {
 	sched := get_instance()
 	waker := get_waker(sched)
-	target := time.time_add(time.now(), n)
-	storage.add(&sched.sleeping, Sleep{target, waker})
+
+	id := storage.add(&sched.sleeping, waker)
+	tw.after(&sched.time_wheel, n, tw.Task(id))
+
 	yield()
 }
 
@@ -137,20 +141,21 @@ yield :: #force_inline proc() {
 	coro.check(coro.yield(coro.running()))
 }
 
+@(private)
 get_user_data :: #force_inline proc() -> ^User_Data {
 	return (^User_Data)(coro.get_user_data(coro.running()))
 }
 
+get_instance :: #force_inline proc() -> ^Scheduler {
+	return get_user_data().sched
+}
+
 get_waker :: #force_inline proc(self: ^Scheduler) -> Waker {
 	ud := get_user_data()
-	return {self, ud.task_id}
+	return {self, ud.id}
 }
 
 get_pending :: #force_inline proc(self: ^Scheduler) -> uint {
 	return storage.count(&self.slots)
-}
-
-get_instance :: #force_inline proc() -> ^Scheduler {
-	return get_user_data().sched
 }
 
