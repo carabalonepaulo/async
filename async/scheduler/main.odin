@@ -70,13 +70,13 @@ poll :: proc(self: ^Scheduler) {
 
 		(ud^).queued = false
 		co := (ud^).co
-		coro.resume(co)
+		coro.check(coro.resume(co))
 
 		if coro.status(co) == .Dead {
 			storage.remove(&self.slots, task_id)
 			ud := (^User_Data)(coro.get_user_data(co))
 			free(ud)
-			coro.destroy(co)
+			coro.check(coro.destroy(co))
 		}
 	}
 
