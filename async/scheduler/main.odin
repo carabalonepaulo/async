@@ -9,6 +9,8 @@ import "../coro"
 import "../storage"
 import tw "../time_wheel"
 
+INITIAL_CAPACITY :: #config(ASYNC_INITIAL_CAPACITY, 1024)
+
 User_Data :: struct {
 	ctx:    runtime.Context,
 	sched:  ^Scheduler,
@@ -43,9 +45,9 @@ Scheduler :: struct {
 }
 
 init :: proc(self: ^Scheduler) {
-	storage.init(&self.slots, 1024)
+	storage.init(&self.slots, INITIAL_CAPACITY)
 	queue.init(&self.ready)
-	storage.init(&self.sleeping, 1024)
+	storage.init(&self.sleeping, INITIAL_CAPACITY)
 
 	tw.init(&self.time_wheel, 1 * time.Millisecond)
 	self.finished = make([dynamic]tw.Task)
