@@ -119,6 +119,7 @@ spawn :: proc(
 
 	desc := coro.desc_init(raw_fn, stack_size)
 	desc.user_data = ud
+	desc.storage_size = 0
 
 	coro.check(coro.create(&ud.co, &desc))
 	queue.enqueue(&self.ready, ud.task_id)
@@ -129,6 +130,10 @@ sleep :: proc(n: time.Duration) {
 	waker := get_waker(sched)
 	target := time.time_add(time.now(), n)
 	storage.add(&sched.sleeping, Sleep{target, waker})
+	yield()
+}
+
+yield :: #force_inline proc() {
 	coro.check(coro.yield(coro.running()))
 }
 
