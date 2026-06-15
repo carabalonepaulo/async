@@ -31,7 +31,7 @@ Request_Task :: struct {
 	w_state: ^Write_State,
 	slist:   ^curl.slist,
 	c_url:   cstring,
-	waker:   async.Waker,
+	handle:  async.Handle,
 }
 
 Client :: struct {
@@ -166,7 +166,7 @@ fetch :: proc(
 		w_state = write_state,
 		slist   = slist,
 		c_url   = c_url,
-		waker   = waker,
+		handle  = waker,
 	}
 
 	final_err := async.recv(Error)
@@ -198,7 +198,7 @@ poll :: proc(self: ^Client) {
 					curl.easy_getinfo(easy_handle, .RESPONSE_CODE, &task.resp.status)
 				}
 
-				async.send(task.waker, err)
+				async.send(task.handle, err)
 
 				curl.multi_remove_handle(self.multi, easy_handle)
 				curl.easy_cleanup(easy_handle)

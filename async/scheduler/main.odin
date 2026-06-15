@@ -21,12 +21,12 @@ User_Data :: struct {
 	queued: bool,
 }
 
-Waker :: struct {
+Handle :: struct {
 	sched: ^Scheduler,
 	id:    u64,
 }
 
-wake :: proc(self: Waker) {
+wake :: proc(self: Handle) {
 	ud, ok := storage.get(&self.sched.slots, self.id)
 	assert(ok, "invalid task id")
 
@@ -36,7 +36,7 @@ wake :: proc(self: Waker) {
 	}
 }
 
-send :: proc(self: Waker, value: $T) {
+send :: proc(self: Handle, value: $T) {
 	ud, ok := storage.get(&self.sched.slots, self.id)
 	assert(ok, "invalid task id")
 
@@ -52,7 +52,7 @@ send :: proc(self: Waker, value: $T) {
 Scheduler :: struct {
 	slots:      storage.Storage(^User_Data),
 	ready:      queue.Queue(u64),
-	sleeping:   storage.Storage(Waker),
+	sleeping:   storage.Storage(Handle),
 	time_wheel: tw.Time_Wheel,
 	finished:   [dynamic]tw.Task,
 }
@@ -112,7 +112,7 @@ spawn :: proc(
 	arg: rawptr = nil,
 	stack_size: uint = 64 * mem.Kilobyte,
 	storage_size: uint = 256,
-) {
+) -> Handle {
 	entry := storage.entry(&self.slots)
 
 	ud := new(User_Data)
@@ -141,6 +141,8 @@ spawn :: proc(
 
 	coro.check(coro.create(&ud.co, &desc))
 	queue.enqueue(&self.ready, ud.id)
+
+	return Handle{self, ud.id}
 }
 
 sleep :: proc(n: time.Duration) {
@@ -171,7 +173,7 @@ get_instance :: #force_inline proc() -> ^Scheduler {
 	return get_user_data().sched
 }
 
-get_waker :: #force_inline proc(self: ^Scheduler) -> Waker {
+get_waker :: #force_inline proc(self: ^Scheduler) -> Handle {
 	ud := get_user_data()
 	return {self, ud.id}
 }
