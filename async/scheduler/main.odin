@@ -146,12 +146,9 @@ spawn :: proc(
 }
 
 sleep :: proc(n: time.Duration) {
-	sched := get_instance()
-	waker := get_waker(sched)
-
-	id := storage.add(&sched.sleeping, waker)
-	tw.after(&sched.time_wheel, n, tw.Task(id))
-
+	ud := get_user_data()
+	id := storage.add(&ud.sched.sleeping, Handle{ud.sched, ud.id})
+	tw.after(&ud.sched.time_wheel, n, tw.Task(id))
 	yield()
 }
 
@@ -173,9 +170,9 @@ get_instance :: #force_inline proc() -> ^Scheduler {
 	return get_user_data().sched
 }
 
-get_waker :: #force_inline proc(self: ^Scheduler) -> Handle {
+get_handle :: #force_inline proc() -> Handle {
 	ud := get_user_data()
-	return {self, ud.id}
+	return {ud.sched, ud.id}
 }
 
 get_pending :: #force_inline proc(self: ^Scheduler) -> uint {

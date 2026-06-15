@@ -157,16 +157,13 @@ fetch :: proc(
 		return nil, .Perform_Failed
 	}
 
-	sched := async.get_instance()
-	waker := async.get_waker(sched)
-
 	self.active_requests[easy_handle] = Request_Task {
 		resp    = resp,
 		h_state = header_state,
 		w_state = write_state,
 		slist   = slist,
 		c_url   = c_url,
-		handle  = waker,
+		handle  = async.get_handle(),
 	}
 
 	final_err := async.recv(Error)
