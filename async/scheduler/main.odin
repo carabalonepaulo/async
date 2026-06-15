@@ -30,8 +30,8 @@ wake :: proc(self: Handle) {
 	ud, ok := storage.get(&self.sched.slots, self.id)
 	assert(ok, "invalid task id")
 
-	if !(ud^).queued {
-		(ud^).queued = true
+	if !ud.queued {
+		ud.queued = true
 		queue.enqueue(&self.sched.ready, self.id)
 	}
 }
@@ -40,9 +40,9 @@ send :: proc(self: Handle, value: $T) {
 	ud, ok := storage.get(&self.sched.slots, self.id)
 	assert(ok, "invalid task id")
 
-	if !(ud^).queued {
-		push((ud^).co, value)
-		(ud^).queued = true
+	if !ud.queued {
+		push(ud.co, value)
+		ud.queued = true
 		queue.enqueue(&self.sched.ready, self.id)
 	} else {
 		panic("multiple send before recv")
@@ -80,10 +80,9 @@ deinit :: proc(self: ^Scheduler) {
 poll :: proc(self: ^Scheduler) {
 	for queue.len(self.ready) > 0 {
 		task_id := queue.pop_front(&self.ready)
-		ud_ptr, ok := storage.get(&self.slots, task_id)
+		ud, ok := storage.get(&self.slots, task_id)
 		assert(ok, "invalid task")
 
-		ud := ud_ptr^
 		ud.queued = false
 		coro.check(coro.resume(ud.co))
 

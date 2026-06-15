@@ -83,7 +83,7 @@ remove :: proc(self: ^Storage($T), key: u64) -> (T, bool) {
 	return removed_value, true
 }
 
-get :: proc(self: ^Storage($T), key: u64) -> (^T, bool) {
+get_ptr :: proc(self: ^Storage($T), key: u64) -> (^T, bool) {
 	idx, gen := unpack_key(key)
 
 	if idx >= u32(len(self.slots)) {
@@ -96,6 +96,21 @@ get :: proc(self: ^Storage($T), key: u64) -> (^T, bool) {
 	}
 
 	return &slot.value, true
+}
+
+get :: proc(self: ^Storage($T), key: u64) -> (T, bool) {
+	idx, gen := unpack_key(key)
+
+	if idx >= u32(len(self.slots)) {
+		return nil, false
+	}
+
+	slot := &self.slots[idx]
+	if !slot.active || slot.gen != gen {
+		return nil, false
+	}
+
+	return slot.value, true
 }
 
 count :: #force_inline proc(self: ^Storage($T)) -> uint {
