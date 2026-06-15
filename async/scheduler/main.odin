@@ -80,18 +80,17 @@ deinit :: proc(self: ^Scheduler) {
 poll :: proc(self: ^Scheduler) {
 	for queue.len(self.ready) > 0 {
 		task_id := queue.pop_front(&self.ready)
-		ud, ok := storage.get(&self.slots, task_id)
+		ud_ptr, ok := storage.get(&self.slots, task_id)
 		assert(ok, "invalid task")
 
-		(ud^).queued = false
-		co := (ud^).co
-		coro.check(coro.resume(co))
+		ud := ud_ptr^
+		ud.queued = false
+		coro.check(coro.resume(ud.co))
 
-		if coro.status(co) == .Dead {
+		if coro.status(ud.co) == .Dead {
 			storage.remove(&self.slots, task_id)
-			ud := (^User_Data)(coro.get_user_data(co))
+			coro.check(coro.destroy(ud.co))
 			free(ud)
-			coro.check(coro.destroy(co))
 		}
 	}
 
@@ -149,6 +148,11 @@ sleep :: proc(n: time.Duration) {
 	ud := get_user_data()
 	id := storage.add(&ud.sched.sleeping, Handle{ud.sched, ud.id})
 	tw.after(&ud.sched.time_wheel, n, tw.Task(id))
+	yield()
+}
+
+reschedule :: #force_inline proc() {
+	wake(get_handle())
 	yield()
 }
 

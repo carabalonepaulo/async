@@ -7,9 +7,9 @@ import "core:time"
 producer :: proc(ud: rawptr) {
 	handle := (^async.Handle)(ud)^
 	for i in 1 ..= 5 {
-		async.sleep(1 * time.Second)
-		async.send(handle, i)
 		fmt.println("[producer] sent", i)
+		async.send(handle, i)
+		async.reschedule()
 	}
 }
 
