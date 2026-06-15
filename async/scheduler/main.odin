@@ -36,6 +36,19 @@ wake :: proc(self: Waker) {
 	}
 }
 
+send :: proc(self: Waker, value: $T) {
+	ud, ok := storage.get(&self.sched.slots, self.id)
+	assert(ok, "invalid task id")
+
+	if !(ud^).queued {
+		push((ud^).co, value)
+		(ud^).queued = true
+		queue.enqueue(&self.sched.ready, self.id)
+	} else {
+		panic("multiple send before recv")
+	}
+}
+
 Scheduler :: struct {
 	slots:      storage.Storage(^User_Data),
 	ready:      queue.Queue(u64),
@@ -98,6 +111,7 @@ spawn :: proc(
 	fn: proc(arg: rawptr),
 	arg: rawptr = nil,
 	stack_size: uint = 64 * mem.Kilobyte,
+	storage_size: uint = 256,
 ) {
 	entry := storage.entry(&self.slots)
 
@@ -123,7 +137,7 @@ spawn :: proc(
 
 	desc := coro.desc_init(raw_fn, stack_size)
 	desc.user_data = ud
-	desc.storage_size = 0
+	desc.storage_size = storage_size
 
 	coro.check(coro.create(&ud.co, &desc))
 	queue.enqueue(&self.ready, ud.id)
@@ -143,6 +157,11 @@ yield :: #force_inline proc() {
 	coro.check(coro.yield(coro.running()))
 }
 
+recv :: #force_inline proc($T: typeid) -> T {
+	yield()
+	return pop(T)
+}
+
 @(private)
 get_user_data :: #force_inline proc() -> ^User_Data {
 	return (^User_Data)(coro.get_user_data(coro.running()))
@@ -159,5 +178,20 @@ get_waker :: #force_inline proc(self: ^Scheduler) -> Waker {
 
 get_pending :: #force_inline proc(self: ^Scheduler) -> uint {
 	return storage.count(&self.slots)
+}
+
+@(private)
+push :: proc(co: ^coro.Coro, value: $T) {
+	value := value
+	coro.check(coro.push(co, &value, size_of(T)))
+}
+
+@(private)
+pop :: proc($T: typeid) -> T {
+	ud := get_user_data()
+	if coro.get_bytes_stored(ud.co) < size_of(T) do panic("send/recv mismatch")
+	value: T
+	coro.check(coro.pop(ud.co, &value, size_of(T)))
+	return value
 }
 
