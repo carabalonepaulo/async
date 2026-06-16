@@ -28,17 +28,18 @@ import async "async:scheduler"
 import "core:fmt"
 import "core:time"
 
-task :: proc(arg: rawptr) {
-	n := transmute(i64)(arg)
-	fmt.printfln("[task] sleeping for %vs...", n)
-	async.sleep(time.Duration(n) * time.Second)
-	fmt.println("[task] woke up")
+producer :: proc(handle: async.Handle) {
+	for i in 1 ..= 5 {
+		fmt.println("[producer] sent", i)
+		async.send(handle, i)
+		async.reschedule()
+	}
 }
 
-small_interval :: proc(arg: rawptr) {
-	for i in 0 ..< 5 {
-		fmt.println("[task] tick")
-		async.sleep(100 * time.Millisecond)
+consumer :: proc() {
+	for _ in 0 ..< 5 {
+		value := async.recv(int)
+		fmt.println("[consumer]", value)
 	}
 }
 
@@ -47,21 +48,13 @@ main :: proc() {
 	async.init(&sched)
 	defer async.deinit(&sched)
 
-	fmt.println("[main] should sleep for 3s")
-	async.spawn(&sched, task, transmute(rawptr)(i64(3)))
-
-	fmt.println("[main] should sleep for 5s")
-	async.spawn(&sched, task, transmute(rawptr)(i64(5)))
-
-	fmt.println("[main] should tick 5 times")
-	async.spawn(&sched, small_interval)
+	consumer := async.spawn(&sched, consumer)
+	async.spawn(&sched, consumer, producer)
 
 	for async.get_pending(&sched) > 0 {
 		async.poll(&sched)
 		time.sleep(1 * time.Millisecond)
 	}
-
-	fmt.println("[main] quit")
 }
 ```
 

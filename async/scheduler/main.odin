@@ -15,8 +15,7 @@ User_Data :: struct {
 	ctx:    runtime.Context,
 	sched:  ^Scheduler,
 	co:     ^coro.Coro,
-	fn:     proc(),
-	arg:    rawptr,
+	fn:     rawptr,
 	id:     u64,
 	queued: bool,
 }
@@ -124,18 +123,14 @@ spawn_with_data :: proc(
 	ud.sched = self
 	ud.co = new(coro.Coro)
 	ud.id = storage.get_id(&entry)
-	ud.arg = rawptr(fn)
+	ud.fn = rawptr(fn)
 
 	storage.insert(&entry, ud)
 
 	raw_fn := proc "c" (co: ^coro.Coro) {
 		ud := (^User_Data)(coro.get_user_data(co))
 		context = ud.ctx
-
-		fn := (proc(arg: T))(ud.arg)
-		ud.arg = nil
-
-		fn(pop(T))
+		((proc(arg: T))(ud.fn))(pop(T))
 	}
 
 	desc := coro.desc_init(raw_fn, stack_size)
@@ -162,7 +157,7 @@ spawn_without_data :: proc(
 	ud.ctx = context
 	ud.sched = self
 	ud.co = new(coro.Coro)
-	ud.fn = fn
+	ud.fn = rawptr(fn)
 	ud.id = storage.get_id(&entry)
 
 	storage.insert(&entry, ud)
@@ -170,7 +165,7 @@ spawn_without_data :: proc(
 	raw_fn := proc "c" (co: ^coro.Coro) {
 		ud := (^User_Data)(coro.get_user_data(co))
 		context = ud.ctx
-		ud.fn()
+		((proc())(ud.fn))()
 	}
 
 	desc := coro.desc_init(raw_fn, stack_size)
