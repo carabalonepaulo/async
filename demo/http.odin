@@ -6,8 +6,7 @@ import async "async:scheduler"
 import "core:fmt"
 import "core:time"
 
-coroutine :: proc(ud: rawptr) {
-	client := (^http.Client)(ud)
+coroutine :: proc(client: ^http.Client) {
 	resp, err := http.get(client, "https://jsonplaceholder.typicode.com/posts/1")
 	defer if err == .None do http.destroy(resp)
 
@@ -33,7 +32,7 @@ http_demo :: proc() {
 	}
 	defer http.deinit(&client)
 
-	async.spawn(&sched, coroutine, &client)
+	async.spawn(&sched, &client, coroutine)
 
 	for async.get_pending(&sched) > 0 {
 		async.poll(&sched)

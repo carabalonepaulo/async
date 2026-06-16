@@ -15,7 +15,7 @@ User_Data :: struct {
 	ctx:    runtime.Context,
 	sched:  ^Scheduler,
 	co:     ^coro.Coro,
-	fn:     proc(arg: rawptr),
+	fn:     proc(),
 	arg:    rawptr,
 	id:     u64,
 	queued: bool,
@@ -104,10 +104,55 @@ poll :: proc(self: ^Scheduler) {
 	clear(&self.finished)
 }
 
-spawn :: proc(
+spawn :: proc {
+	spawn_with_data,
+	spawn_without_data,
+}
+
+spawn_with_data :: proc(
 	self: ^Scheduler,
-	fn: proc(arg: rawptr),
-	arg: rawptr = nil,
+	arg: $T,
+	fn: proc(arg: T),
+	stack_size: uint = 64 * mem.Kilobyte,
+	storage_size: uint = 256,
+) -> Handle {
+	entry := storage.entry(&self.slots)
+	arg := arg
+
+	ud := new(User_Data)
+	ud.ctx = context
+	ud.sched = self
+	ud.co = new(coro.Coro)
+	ud.id = storage.get_id(&entry)
+	ud.arg = rawptr(fn)
+
+	storage.insert(&entry, ud)
+
+	raw_fn := proc "c" (co: ^coro.Coro) {
+		ud := (^User_Data)(coro.get_user_data(co))
+		context = ud.ctx
+
+		fn := (proc(arg: T))(ud.arg)
+		ud.arg = nil
+
+		fn(pop(T))
+	}
+
+	desc := coro.desc_init(raw_fn, stack_size)
+	desc.user_data = ud
+	desc.storage_size = storage_size
+
+	coro.check(coro.create(&ud.co, &desc))
+	coro.push(ud.co, &arg, size_of(T))
+
+	queue.enqueue(&self.ready, ud.id)
+
+	return Handle{self, ud.id}
+}
+
+spawn_without_data :: proc(
+	self: ^Scheduler,
+	fn: proc(),
 	stack_size: uint = 64 * mem.Kilobyte,
 	storage_size: uint = 256,
 ) -> Handle {
@@ -119,18 +164,13 @@ spawn :: proc(
 	ud.co = new(coro.Coro)
 	ud.fn = fn
 	ud.id = storage.get_id(&entry)
-	ud.arg = arg
 
 	storage.insert(&entry, ud)
 
 	raw_fn := proc "c" (co: ^coro.Coro) {
 		ud := (^User_Data)(coro.get_user_data(co))
 		context = ud.ctx
-
-		arg := ud.arg
-		ud.arg = nil
-
-		ud.fn(arg)
+		ud.fn()
 	}
 
 	desc := coro.desc_init(raw_fn, stack_size)

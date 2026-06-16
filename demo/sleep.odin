@@ -5,14 +5,13 @@ import async "async:scheduler"
 import "core:fmt"
 import "core:time"
 
-task :: proc(arg: rawptr) {
-	n := transmute(i64)(arg)
+task :: proc(n: int) {
 	fmt.printfln("[task] sleeping for %vs...", n)
 	async.sleep(time.Duration(n) * time.Second)
 	fmt.println("[task] woke up")
 }
 
-small_interval :: proc(arg: rawptr) {
+small_interval :: proc() {
 	for i in 0 ..< 5 {
 		fmt.println("[task] tick")
 		async.sleep(100 * time.Millisecond)
@@ -25,10 +24,10 @@ sleep_demo :: proc() {
 	defer async.deinit(&sched)
 
 	fmt.println("[main] should sleep for 3s")
-	async.spawn(&sched, task, transmute(rawptr)(i64(3)))
+	async.spawn(&sched, 3, task)
 
 	fmt.println("[main] should sleep for 5s")
-	async.spawn(&sched, task, transmute(rawptr)(i64(5)))
+	async.spawn(&sched, 5, task)
 
 	fmt.println("[main] should tick 5 times")
 	async.spawn(&sched, small_interval)
