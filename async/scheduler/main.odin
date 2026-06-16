@@ -1,6 +1,7 @@
 package scheduler
 
 import "base:runtime"
+import "core:c"
 import "core:container/queue"
 import "core:mem"
 import "core:time"
@@ -12,12 +13,13 @@ import tw "../time_wheel"
 INITIAL_CAPACITY :: #config(ASYNC_INITIAL_CAPACITY, 1024)
 
 User_Data :: struct {
-	ctx:    runtime.Context,
-	sched:  ^Scheduler,
-	co:     ^coro.Coro,
-	fn:     rawptr,
-	id:     u64,
-	queued: bool,
+	ctx:       runtime.Context,
+	sched:     ^Scheduler,
+	co:        ^coro.Coro,
+	fn:        rawptr,
+	id:        u64,
+	queued:    bool,
+	allocator: mem.Allocator,
 }
 
 Handle :: struct {
@@ -114,29 +116,18 @@ spawn_with_data :: proc(
 	fn: proc(arg: T),
 	stack_size: uint = 64 * mem.Kilobyte,
 	storage_size: uint = 256,
+	stack_allocator := context.allocator,
 ) -> Handle {
-	entry := storage.entry(&self.slots)
 	arg := arg
 
-	ud := new(User_Data)
-	ud.ctx = context
-	ud.sched = self
-	ud.co = new(coro.Coro)
-	ud.id = storage.get_id(&entry)
-	ud.fn = rawptr(fn)
-
-	storage.insert(&entry, ud)
-
+	ud := create_ud(self, rawptr(fn), stack_allocator)
 	raw_fn := proc "c" (co: ^coro.Coro) {
 		ud := (^User_Data)(coro.get_user_data(co))
 		context = ud.ctx
 		((proc(arg: T))(ud.fn))(pop(T))
 	}
 
-	desc := coro.desc_init(raw_fn, stack_size)
-	desc.user_data = ud
-	desc.storage_size = storage_size
-
+	desc := create_desc(raw_fn, ud, stack_size, storage_size)
 	coro.check(coro.create(&ud.co, &desc))
 	coro.push(ud.co, &arg, size_of(T))
 
@@ -150,28 +141,16 @@ spawn_without_data :: proc(
 	fn: proc(),
 	stack_size: uint = 64 * mem.Kilobyte,
 	storage_size: uint = 256,
+	stack_allocator := context.allocator,
 ) -> Handle {
-	entry := storage.entry(&self.slots)
-
-	ud := new(User_Data)
-	ud.ctx = context
-	ud.sched = self
-	ud.co = new(coro.Coro)
-	ud.fn = rawptr(fn)
-	ud.id = storage.get_id(&entry)
-
-	storage.insert(&entry, ud)
-
+	ud := create_ud(self, rawptr(fn), stack_allocator)
 	raw_fn := proc "c" (co: ^coro.Coro) {
 		ud := (^User_Data)(coro.get_user_data(co))
 		context = ud.ctx
 		((proc())(ud.fn))()
 	}
 
-	desc := coro.desc_init(raw_fn, stack_size)
-	desc.user_data = ud
-	desc.storage_size = storage_size
-
+	desc := create_desc(raw_fn, ud, stack_size, storage_size)
 	coro.check(coro.create(&ud.co, &desc))
 	queue.enqueue(&self.ready, ud.id)
 
@@ -230,5 +209,49 @@ pop :: proc($T: typeid) -> T {
 	value: T
 	coro.check(coro.pop(ud.co, &value, size_of(T)))
 	return value
+}
+
+@(private)
+create_ud :: proc(self: ^Scheduler, fn: rawptr, allocator: mem.Allocator) -> ^User_Data {
+	entry := storage.entry(&self.slots)
+
+	ud := new(User_Data)
+	ud.ctx = context
+	ud.sched = self
+	ud.co = new(coro.Coro)
+	ud.fn = fn
+	ud.id = storage.get_id(&entry)
+	ud.allocator = allocator
+
+	storage.insert(&entry, ud)
+
+	return ud
+}
+
+@(private)
+create_desc :: proc(
+	raw_fn: proc "c" (co: ^coro.Coro),
+	ud: ^User_Data,
+	stack_size: uint,
+	storage_size: uint,
+) -> (
+	desc: coro.Desc,
+) {
+	desc = coro.desc_init(raw_fn, stack_size)
+	desc.user_data = ud
+	desc.storage_size = storage_size
+	desc.allocator_data = ud
+	desc.alloc_cb = proc "c" (size: c.size_t, allocator_data: rawptr) -> rawptr {
+		ud := (^User_Data)(allocator_data)
+		context = ud.ctx
+		ptr, _ := mem.alloc(int(size), allocator = ud.allocator)
+		return ptr
+	}
+	desc.dealloc_cb = proc "c" (ptr: rawptr, size: c.size_t, allocator_data: rawptr) {
+		ud := (^User_Data)(allocator_data)
+		context = ud.ctx
+		mem.free_with_size(ptr, int(size), allocator = ud.allocator)
+	}
+	return
 }
 
