@@ -3,6 +3,8 @@ package storage
 INDEX_BITS :: 32
 INDEX_MASK :: (1 << INDEX_BITS) - 1
 
+INVALID :: 0
+
 Iterator :: struct($T: typeid) {
 	storage: ^Storage(T),
 	index:   int,
@@ -37,10 +39,10 @@ reserve :: proc(self: ^Storage($T)) -> (idx: u32, gen: u32) {
 		gen = self.slots[idx].gen
 	} else {
 		idx = u32(len(self.slots))
-		gen = 0
+		gen = 1
 
 		slot := Slot(T) {
-			gen    = 0,
+			gen    = gen,
 			active = false,
 		}
 		append(&self.slots, slot)

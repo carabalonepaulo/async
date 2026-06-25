@@ -6,11 +6,11 @@ import "core:time"
 
 Signal_Arg :: struct {
 	ch:     ^async.Chan(int),
-	cancel: ^async.Chan(bool),
+	cancel: ^async.Cancellation_Token,
 }
 
 signal_producer :: proc(ch: ^async.Chan(int)) {
-	async.sleep(500 * time.Millisecond)
+	// async.sleep(500 * time.Millisecond)
 	async.send(ch, 129)
 	fmt.println("[producer] sent", 129)
 }
@@ -20,7 +20,7 @@ signal_select :: proc(arg: Signal_Arg) {
 	val: int
 
 	idx := async.select(
-		{async.branch(arg.ch, &val), async.branch(arg.cancel)},
+		{async.branch(arg.cancel), async.branch(arg.ch, &val)},
 		timeout = 1 * time.Second,
 	)
 
@@ -40,11 +40,11 @@ signal_demo :: proc() {
 	defer async.deinit(&sched)
 
 	ch: async.Chan(int)
-	cancel: async.Chan(bool)
+	cancel: async.Cancellation_Token
 
 	async.init(&sched, &ch); defer async.deinit(&ch)
-	async.init(&sched, &cancel); defer async.deinit(&cancel)
-	async.send(&cancel, true)
+	async.init(&sched, &cancel)
+	async.trigger(&cancel)
 
 	async.spawn(&sched, &ch, signal_producer)
 	async.spawn(&sched, Signal_Arg{&ch, &cancel}, signal_select)

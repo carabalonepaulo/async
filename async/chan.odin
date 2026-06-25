@@ -1,6 +1,7 @@
 package async
 
 import "core:container/queue"
+import "core:fmt"
 import "core:time"
 
 import "coro"
@@ -135,12 +136,21 @@ len :: #force_inline proc(self: ^Chan($T)) -> int {
 	return queue.len(self.items)
 }
 
-branch :: proc(ch: ^Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
-	assert(is_chan_alive(ch), "can't use a closed channel")
+default_branch :: proc(ch: ^Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
+	id: u64 = storage.INVALID
+	chan: ^Chan(T)
+	receivers: ^queue.Queue(Waiter)
+
+	if is_chan_alive(ch) {
+		id = ch.id
+		chan = ch
+		receivers = &ch.receivers
+	}
+
 	return Case {
-		ch_id = ch.id,
-		ch = ch,
-		receivers = &ch.receivers,
+		ch_id = id,
+		ch = chan,
+		receivers = receivers,
 		out_ptr = out,
 		out_ok_ptr = out_ok,
 		pop = proc(raw_ch: rawptr, out: rawptr, out_ok: ^bool) -> bool {
@@ -221,6 +231,7 @@ is_chan_alive :: proc {
 
 @(private)
 is_chan_alive_by_ref :: #force_inline proc(self: ^Chan($T)) -> bool {
+	if self == nil do return false
 	return is_chan_alive_by_id(self.sched, self.id)
 }
 
