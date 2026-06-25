@@ -55,6 +55,7 @@ Scheduler :: struct {
 	slots:      storage.Storage(^User_Data),
 	ready:      queue.Queue(u64),
 	sleeping:   storage.Storage(Handle),
+	channels:   storage.Storage(bool),
 	time_wheel: tw.Time_Wheel,
 	finished:   [dynamic]tw.Task,
 }
@@ -63,6 +64,7 @@ scheduler_init :: proc(self: ^Scheduler) {
 	storage.init(&self.slots, INITIAL_CAPACITY)
 	queue.init(&self.ready)
 	storage.init(&self.sleeping, INITIAL_CAPACITY)
+	storage.init(&self.channels, INITIAL_CAPACITY)
 
 	tw.init(&self.time_wheel, 1 * time.Millisecond)
 	self.finished = make([dynamic]tw.Task)
@@ -70,10 +72,12 @@ scheduler_init :: proc(self: ^Scheduler) {
 
 scheduler_deinit :: proc(self: ^Scheduler) {
 	assert(storage.count(&self.slots) == 0, "scheduler has pending tasks")
+	assert(storage.count(&self.channels) == 0, "scheduler has active channels")
 
 	storage.deinit(&self.slots)
 	queue.destroy(&self.ready)
 	storage.deinit(&self.sleeping)
+	storage.deinit(&self.channels)
 
 	tw.deinit(&self.time_wheel)
 	delete(self.finished)

@@ -30,7 +30,7 @@ ch_producer_consumer_demo :: proc() {
 	defer async.deinit(&sched)
 
 	ch: async.Chan(int)
-	async.init(&ch)
+	async.init(&sched, &ch)
 	defer async.deinit(&ch)
 
 	consumer := async.spawn(&sched, &ch, ch_consumer)

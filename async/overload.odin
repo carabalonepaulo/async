@@ -3,6 +3,7 @@ package async
 init :: proc {
 	scheduler_init,
 	chan_init,
+	chan_init_from_coro,
 }
 
 deinit :: proc {

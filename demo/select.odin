@@ -54,8 +54,8 @@ select_demo :: proc() {
 	ch_a: async.Chan(int)
 	ch_b: async.Chan(int)
 
-	async.init(&ch_a); defer async.deinit(&ch_a)
-	async.init(&ch_b); defer async.deinit(&ch_b)
+	async.init(&sched, &ch_a); defer async.deinit(&ch_a)
+	async.init(&sched, &ch_b); defer async.deinit(&ch_b)
 
 	async.spawn(&sched, &ch_a, producer_a)
 	async.spawn(&sched, &ch_b, producer_b)

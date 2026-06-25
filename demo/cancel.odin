@@ -42,8 +42,8 @@ signal_demo :: proc() {
 	ch: async.Chan(int)
 	cancel: async.Chan(bool)
 
-	async.init(&ch); defer async.deinit(&ch)
-	async.init(&cancel); defer async.deinit(&cancel)
+	async.init(&sched, &ch); defer async.deinit(&ch)
+	async.init(&sched, &cancel); defer async.deinit(&cancel)
 	async.send(&cancel, true)
 
 	async.spawn(&sched, &ch, signal_producer)

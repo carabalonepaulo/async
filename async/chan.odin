@@ -9,10 +9,12 @@ import tw "time_wheel"
 
 @(private)
 Case :: struct {
-	ch:        rawptr,
-	receivers: ^queue.Queue(Waiter),
-	pop:       proc(ch: rawptr, dest: rawptr) -> bool,
-	ptr:       rawptr,
+	ch_id:      u64,
+	ch:         rawptr,
+	receivers:  ^queue.Queue(Waiter),
+	pop:        proc(ch: rawptr, dest: rawptr, ok: ^bool) -> bool,
+	out_ptr:    rawptr,
+	out_ok_ptr: ^bool,
 }
 
 @(private)
@@ -31,16 +33,27 @@ Result :: struct($T: typeid) {
 Chan :: struct($T: typeid) {
 	receivers: queue.Queue(Waiter),
 	items:     queue.Queue(Result(T)),
-	open:      bool,
+	id:        u64,
+	sched:     ^Scheduler,
 }
 
-chan_init :: proc(self: ^Chan($T), cap := 16) {
+Chan_Handle :: distinct u64
+
+chan_init :: proc(sched: ^Scheduler, self: ^Chan($T), cap := 16) {
 	queue.init(&self.receivers, 1)
 	queue.init(&self.items, cap)
-	self.open = true
+	self.id = storage.add(&sched.channels, true)
+	self.sched = sched
+}
+
+chan_init_from_coro :: proc(self: ^Chan($T), cap := 16) {
+	sched := get_instance()
+	chan_init(sched, self, cap)
 }
 
 chan_deinit :: proc(self: ^Chan($T)) {
+	storage.remove(&self.sched.channels, self.id)
+
 	for self.receivers.len > 0 {
 		waiter := queue.pop_front(&self.receivers)
 		if waiter.case_idx == -1 {
@@ -57,12 +70,10 @@ chan_deinit :: proc(self: ^Chan($T)) {
 
 	queue.destroy(&self.receivers)
 	queue.destroy(&self.items)
-
-	self.open = false
 }
 
 chan_send :: proc(self: ^Chan($T), value: T) {
-	assert(self.open, "cannot send to a closed or uninitialized channel")
+	assert(is_chan_alive(self), "cannot send to a closed or uninitialized channel")
 
 	for self.receivers.len > 0 {
 		waiter := queue.pop_front(&self.receivers)
@@ -124,16 +135,20 @@ len :: #force_inline proc(self: ^Chan($T)) -> int {
 	return queue.len(self.items)
 }
 
-branch :: proc(ch: ^Chan($T), out: ^T = nil) -> Case {
+branch :: proc(ch: ^Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
+	assert(is_chan_alive(ch), "can't use a closed channel")
 	return Case {
+		ch_id = ch.id,
 		ch = ch,
 		receivers = &ch.receivers,
-		ptr = out,
-		pop = proc(raw_ch: rawptr, dest: rawptr) -> bool {
+		out_ptr = out,
+		out_ok_ptr = out_ok,
+		pop = proc(raw_ch: rawptr, out: rawptr, out_ok: ^bool) -> bool {
 			ch := (^Chan(T))(raw_ch)
 			if ch.items.len > 0 {
 				result := queue.pop_front(&ch.items)
-				if dest != nil && result.ok do (^T)(dest)^ = result.value
+				if out != nil do (^T)(out)^ = result.value
+				if out_ok != nil do out_ok^ = result.ok
 				return true
 			}
 			return false
@@ -142,7 +157,15 @@ branch :: proc(ch: ^Chan($T), out: ^T = nil) -> Case {
 }
 
 select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
-	for c, i in cases do if c.pop(c.ch, c.ptr) do return i
+	sched := get_instance()
+
+	for c, i in cases {
+		if !is_chan_alive(sched, c.ch_id) {
+			if c.out_ok_ptr != nil do c.out_ok_ptr^ = false
+			return i
+		}
+		if c.pop(c.ch, c.out_ptr, c.out_ok_ptr) do return i
+	}
 	if timeout == 0 do return -1
 
 	handle := get_handle()
@@ -152,7 +175,7 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 	for c, i in cases {
 		waiter := Waiter {
 			handle   = handle,
-			dest_ptr = c.ptr,
+			dest_ptr = c.out_ptr,
 			case_idx = i,
 		}
 		queue.enqueue(c.receivers, waiter)
@@ -171,9 +194,8 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 			idx = (-raw_idx) - 1
 			for c, i in cases do if i != idx do remove_waiter(c.receivers, handle)
 			return idx
-		} else {
-			idx = raw_idx
-		}
+		} else do idx = raw_idx
+		if cases[idx].out_ok_ptr != nil do cases[idx].out_ok_ptr^ = raw_idx >= 0
 	} else {
 		idx = -1
 	}
@@ -189,5 +211,22 @@ remove_waiter :: proc(q: ^queue.Queue(Waiter), handle: Handle) {
 		waiter := queue.pop_front(q)
 		if waiter.handle.id != handle.id do queue.enqueue(q, waiter)
 	}
+}
+
+@(private)
+is_chan_alive :: proc {
+	is_chan_alive_by_ref,
+	is_chan_alive_by_id,
+}
+
+@(private)
+is_chan_alive_by_ref :: #force_inline proc(self: ^Chan($T)) -> bool {
+	return is_chan_alive_by_id(self.sched, self.id)
+}
+
+@(private)
+is_chan_alive_by_id :: #force_inline proc(sched: ^Scheduler, chan_id: u64) -> bool {
+	_, ok := storage.get_ptr(&sched.channels, chan_id)
+	return ok
 }
 
