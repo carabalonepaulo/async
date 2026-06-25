@@ -43,7 +43,14 @@ chan_init :: proc(self: ^Chan($T), cap := 16) {
 chan_deinit :: proc(self: ^Chan($T)) {
 	for self.receivers.len > 0 {
 		waiter := queue.pop_front(&self.receivers)
-		send(waiter.handle, Result(T){ok = false})
+		if waiter.case_idx == -1 {
+			send(waiter.handle, Result(T){ok = false})
+		} else {
+			ud, ok := storage.get(&waiter.handle.sched.slots, waiter.handle.id)
+			if !ok do continue
+			if coro.get_bytes_stored(ud.co) > 0 do continue
+			send(waiter.handle, -(waiter.case_idx + 1))
+		}
 	}
 
 	assert(self.items.len == 0, "channel destroyed with unconsumed buffered items (leak)")
@@ -117,7 +124,7 @@ len :: #force_inline proc(self: ^Chan($T)) -> int {
 	return queue.len(self.items)
 }
 
-branch :: proc(ch: ^Chan($T), out: ^T) -> Case {
+branch :: proc(ch: ^Chan($T), out: ^T = nil) -> Case {
 	return Case {
 		ch = ch,
 		receivers = &ch.receivers,
@@ -126,7 +133,7 @@ branch :: proc(ch: ^Chan($T), out: ^T) -> Case {
 			ch := (^Chan(T))(raw_ch)
 			if ch.items.len > 0 {
 				result := queue.pop_front(&ch.items)
-				(^T)(dest)^ = result.value
+				if dest != nil && result.ok do (^T)(dest)^ = result.value
 				return true
 			}
 			return false
@@ -157,8 +164,16 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 	idx: int
 
 	if coro.get_bytes_stored(ud.co) >= size_of(int) {
-		idx = pop(int)
+		raw_idx := pop(int)
 		storage.remove(&handle.sched.sleeping, timer_id)
+
+		if raw_idx < 0 {
+			idx = (-raw_idx) - 1
+			for c, i in cases do if i != idx do remove_waiter(c.receivers, handle)
+			return idx
+		} else {
+			idx = raw_idx
+		}
 	} else {
 		idx = -1
 	}
