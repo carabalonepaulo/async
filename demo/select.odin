@@ -1,7 +1,6 @@
 package main
 
 import async "async:scheduler"
-import "core:container/queue"
 import "core:fmt"
 import "core:time"
 
@@ -11,14 +10,14 @@ Select_Arg :: struct {
 }
 
 producer_a :: proc(ch: ^async.Chan(int)) {
-	async.sleep(5 * time.Second)
+	async.sleep(5 * time.Millisecond)
 	fmt.println("[A] sent", 3)
 	async.send(ch, 3)
 	fmt.println("[A] end")
 }
 
 producer_b :: proc(ch: ^async.Chan(int)) {
-	async.sleep(3 * time.Second)
+	async.sleep(3 * time.Millisecond)
 	fmt.println("[B] sent", 5)
 	async.send(ch, 5)
 	fmt.println("[B] end")
@@ -67,7 +66,7 @@ select_demo :: proc() {
 		time.sleep(1 * time.Millisecond)
 	}
 
-	for ch_a.items.len > 0 do queue.pop_front(&ch_a.items)
-	for ch_b.items.len > 0 do queue.pop_front(&ch_b.items)
+	async.clear(&ch_a)
+	async.clear(&ch_b)
 }
 

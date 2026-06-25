@@ -5,7 +5,6 @@ import "core:container/queue"
 import "core:time"
 
 import "../coro"
-// import sch "../scheduler"
 import tw "../time_wheel"
 
 @(private)
@@ -47,7 +46,7 @@ chan_deinit :: proc(self: ^Chan($T)) {
 		send(waiter.handle, Result(T){ok = false})
 	}
 
-	assert(self.items.len == 0)
+	assert(self.items.len == 0, "channel destroyed with unconsumed buffered items (leak)")
 
 	queue.destroy(&self.receivers)
 	queue.destroy(&self.items)
@@ -56,7 +55,7 @@ chan_deinit :: proc(self: ^Chan($T)) {
 }
 
 chan_send :: proc(self: ^Chan($T), value: T) {
-	assert(self.open)
+	assert(self.open, "cannot send to a closed or uninitialized channel")
 
 	for self.receivers.len > 0 {
 		waiter := queue.pop_front(&self.receivers)
@@ -96,6 +95,28 @@ chan_recv :: proc(self: ^Chan($T)) -> (T, bool) {
 	return result.value, result.ok
 }
 
+drain :: proc(self: ^Chan($T)) -> (T, bool) {
+	assert(queue.len(self.receivers) == 0, "channel has active coroutines waiting to receive data")
+	if queue.len(self.items) > 0 {
+		result := queue.pop_front(&self.items)
+		return result.value, result.ok
+	}
+	return {}, false
+}
+
+clear :: proc(self: ^Chan($T), destroy_item: Maybe(proc(item: ^T)) = nil) {
+	for queue.len(self.items) > 0 {
+		result := queue.pop_front(&self.items)
+		if fn, ok := destroy_item.(proc(item: ^T)); ok {
+			if result.ok do fn(&result.value)
+		}
+	}
+}
+
+len :: #force_inline proc(self: ^Chan($T)) -> int {
+	return queue.len(self.items)
+}
+
 branch :: proc(ch: ^Chan($T), out: ^T) -> Case {
 	return Case {
 		ch = ch,
@@ -113,9 +134,9 @@ branch :: proc(ch: ^Chan($T), out: ^T) -> Case {
 	}
 }
 
-select :: proc(cases: []Case, timeout: time.Duration = time.Duration(0)) -> int {
+select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 	for c, i in cases do if c.pop(c.ch, c.ptr) do return i
-	if timeout <= 0 do return -1
+	if timeout == 0 do return -1
 
 	handle := get_handle()
 	timer_id := storage.add(&handle.sched.sleeping, handle)

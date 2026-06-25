@@ -1,5 +1,6 @@
 package scheduler
 
+import "base:builtin"
 import "base:runtime"
 import "core:c"
 import "core:container/queue"
@@ -95,14 +96,14 @@ poll :: proc(self: ^Scheduler) {
 	}
 
 	tw.spin(&self.time_wheel, &self.finished)
-	if len(self.finished) > 0 {
+	if builtin.len(self.finished) > 0 {
 		for id in self.finished {
 			if waker, ok := storage.remove(&self.sleeping, id); ok {
 				wake(waker)
 			}
 		}
 	}
-	clear(&self.finished)
+	runtime.clear(&self.finished)
 }
 
 spawn :: proc {
