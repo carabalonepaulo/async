@@ -1,27 +1,26 @@
 package main
 
-import "async:chan"
 import async "async:scheduler"
 import "core:container/queue"
 import "core:fmt"
 import "core:time"
 
 Select_Arg :: struct {
-	ch_a: ^chan.Chan(int),
-	ch_b: ^chan.Chan(int),
+	ch_a: ^async.Chan(int),
+	ch_b: ^async.Chan(int),
 }
 
-producer_a :: proc(ch: ^chan.Chan(int)) {
+producer_a :: proc(ch: ^async.Chan(int)) {
 	async.sleep(5 * time.Second)
 	fmt.println("[A] sent", 3)
-	chan.send(ch, 3)
+	async.send(ch, 3)
 	fmt.println("[A] end")
 }
 
-producer_b :: proc(ch: ^chan.Chan(int)) {
+producer_b :: proc(ch: ^async.Chan(int)) {
 	async.sleep(3 * time.Second)
 	fmt.println("[B] sent", 5)
-	chan.send(ch, 5)
+	async.send(ch, 5)
 	fmt.println("[B] end")
 }
 
@@ -31,8 +30,8 @@ consumer_select :: proc(arg: Select_Arg) {
 		a_val: int
 		b_val: int
 
-		idx := chan.select(
-			{chan.branch(arg.ch_a, &a_val), chan.branch(arg.ch_b, &b_val)},
+		idx := async.select(
+			{async.branch(arg.ch_a, &a_val), async.branch(arg.ch_b, &b_val)},
 			timeout = 1 * time.Second,
 		)
 
@@ -53,11 +52,11 @@ select_demo :: proc() {
 	async.init(&sched)
 	defer async.deinit(&sched)
 
-	ch_a: chan.Chan(int)
-	ch_b: chan.Chan(int)
+	ch_a: async.Chan(int)
+	ch_b: async.Chan(int)
 
-	chan.init(&ch_a); defer chan.deinit(&ch_a)
-	chan.init(&ch_b); defer chan.deinit(&ch_b)
+	async.init(&ch_a); defer async.deinit(&ch_a)
+	async.init(&ch_b); defer async.deinit(&ch_b)
 
 	async.spawn(&sched, &ch_a, producer_a)
 	async.spawn(&sched, &ch_b, producer_b)

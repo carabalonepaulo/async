@@ -37,7 +37,7 @@ wake :: proc(self: Handle) {
 	}
 }
 
-send :: proc(self: Handle, value: $T) {
+scheduler_send :: proc(self: Handle, value: $T) {
 	ud, ok := storage.get(&self.sched.slots, self.id)
 	assert(ok, "invalid task id")
 
@@ -58,7 +58,7 @@ Scheduler :: struct {
 	finished:   [dynamic]tw.Task,
 }
 
-init :: proc(self: ^Scheduler) {
+scheduler_init :: proc(self: ^Scheduler) {
 	storage.init(&self.slots, INITIAL_CAPACITY)
 	queue.init(&self.ready)
 	storage.init(&self.sleeping, INITIAL_CAPACITY)
@@ -67,7 +67,7 @@ init :: proc(self: ^Scheduler) {
 	self.finished = make([dynamic]tw.Task)
 }
 
-deinit :: proc(self: ^Scheduler) {
+scheduler_deinit :: proc(self: ^Scheduler) {
 	assert(storage.count(&self.slots) == 0, "scheduler has pending tasks")
 
 	storage.deinit(&self.slots)
@@ -173,12 +173,12 @@ yield :: #force_inline proc() {
 	coro.check(coro.yield(coro.running()))
 }
 
-recv :: #force_inline proc($T: typeid) -> T {
+scheduler_recv :: #force_inline proc($T: typeid) -> T {
 	yield()
 	return pop(T)
 }
 
-// @(private)
+@(private)
 get_user_data :: #force_inline proc() -> ^User_Data {
 	return (^User_Data)(coro.get_user_data(coro.running()))
 }
@@ -196,11 +196,13 @@ get_pending :: #force_inline proc(self: ^Scheduler) -> uint {
 	return storage.count(&self.slots)
 }
 
+@(private)
 push :: proc(co: ^coro.Coro, value: $T) {
 	value := value
 	coro.check(coro.push(co, &value, size_of(T)))
 }
 
+@(private)
 pop :: proc($T: typeid) -> T {
 	ud := get_user_data()
 	if coro.get_bytes_stored(ud.co) < size_of(T) do panic("send/recv mismatch")
