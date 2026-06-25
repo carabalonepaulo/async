@@ -1,9 +1,12 @@
 package chan
 
+import "async:storage"
 import "core:container/queue"
 import "core:time"
 
+import "../coro"
 import sch "../scheduler"
+import tw "../time_wheel"
 
 @(private)
 Case :: struct {
@@ -14,18 +17,10 @@ Case :: struct {
 }
 
 @(private)
-Select :: struct {
-	cases:    []Case,
-	resolved: bool,
-}
-
-@(private)
 Waiter :: struct {
 	handle:   sch.Handle,
 	dest_ptr: rawptr,
-	select:   ^Select,
 	case_idx: int,
-	done:     bool,
 }
 
 @(private)
@@ -66,18 +61,18 @@ send :: proc(self: ^Chan($T), value: T) {
 	for self.receivers.len > 0 {
 		waiter := queue.pop_front(&self.receivers)
 
-		if waiter.select != nil {
-			if waiter.select.resolved do continue
-			waiter.select.resolved = true
-
-			ptr := (^T)(waiter.dest_ptr)
-			ptr^ = value
-
-			sch.send(waiter.handle, waiter.case_idx)
+		if waiter.case_idx == -1 {
+			sch.send(waiter.handle, Result(T){value, true})
 			return
 		}
 
-		sch.send(waiter.handle, Result(T){value, true})
+		ud, ok := storage.get(&waiter.handle.sched.slots, waiter.handle.id)
+		if !ok do continue
+		if coro.get_bytes_stored(ud.co) > 0 do continue
+
+		ptr := (^T)(waiter.dest_ptr)
+		ptr^ = value
+		sch.send(waiter.handle, waiter.case_idx)
 		return
 	}
 
@@ -93,8 +88,7 @@ recv :: proc(self: ^Chan($T)) -> (T, bool) {
 	waiter := Waiter {
 		handle   = sch.get_handle(),
 		dest_ptr = nil,
-		select   = nil,
-		done     = false,
+		case_idx = -1,
 	}
 
 	queue.enqueue(&self.receivers, waiter)
@@ -122,23 +116,35 @@ branch :: proc(ch: ^Chan($T), out: ^T) -> Case {
 select :: proc(cases: []Case, timeout: time.Duration = time.Duration(0)) -> int {
 	for c, i in cases do if c.pop(c.ch, c.ptr) do return i
 
-	state := Select {
-		cases    = cases,
-		resolved = false,
+	if timeout <= 0 {
+		return -1
 	}
 
 	handle := sch.get_handle()
+	timer_id := storage.add(&handle.sched.sleeping, handle)
+	tw.after(&handle.sched.time_wheel, timeout, tw.Task(timer_id))
+
 	for c, i in cases {
 		waiter := Waiter {
 			handle   = handle,
 			dest_ptr = c.ptr,
-			select   = &state,
 			case_idx = i,
 		}
 		queue.enqueue(c.receivers, waiter)
 	}
 
-	idx := sch.recv(int)
+	sch.yield()
+
+	ud := sch.get_user_data()
+	idx: int
+
+	if coro.get_bytes_stored(ud.co) >= size_of(int) {
+		idx = sch.pop(int)
+		storage.remove(&handle.sched.sleeping, timer_id)
+	} else {
+		idx = -1
+	}
+
 	for c in cases do remove_waiter(c.receivers, handle)
 	return idx
 }

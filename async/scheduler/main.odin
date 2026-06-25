@@ -97,9 +97,9 @@ poll :: proc(self: ^Scheduler) {
 	tw.spin(&self.time_wheel, &self.finished)
 	if len(self.finished) > 0 {
 		for id in self.finished {
-			waker, ok := storage.remove(&self.sleeping, id)
-			assert(ok, "invalid task")
-			wake(waker)
+			if waker, ok := storage.remove(&self.sleeping, id); ok {
+				wake(waker)
+			}
 		}
 	}
 	clear(&self.finished)
@@ -178,7 +178,7 @@ recv :: #force_inline proc($T: typeid) -> T {
 	return pop(T)
 }
 
-@(private)
+// @(private)
 get_user_data :: #force_inline proc() -> ^User_Data {
 	return (^User_Data)(coro.get_user_data(coro.running()))
 }
@@ -196,13 +196,11 @@ get_pending :: #force_inline proc(self: ^Scheduler) -> uint {
 	return storage.count(&self.slots)
 }
 
-@(private)
 push :: proc(co: ^coro.Coro, value: $T) {
 	value := value
 	coro.check(coro.push(co, &value, size_of(T)))
 }
 
-@(private)
 pop :: proc($T: typeid) -> T {
 	ud := get_user_data()
 	if coro.get_bytes_stored(ud.co) < size_of(T) do panic("send/recv mismatch")
