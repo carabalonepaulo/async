@@ -7,7 +7,7 @@ import "core:mem"
 import "core:strings"
 import "vendor:curl"
 
-import async "../scheduler"
+import async ".."
 
 CA_PEM :: #load("cacert.pem")
 

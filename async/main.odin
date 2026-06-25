@@ -1,4 +1,4 @@
-package scheduler
+package async
 
 import "base:builtin"
 import "base:runtime"
@@ -7,9 +7,9 @@ import "core:container/queue"
 import "core:mem"
 import "core:time"
 
-import "../coro"
-import "../storage"
-import tw "../time_wheel"
+import "coro"
+import "storage"
+import tw "time_wheel"
 
 INITIAL_CAPACITY :: #config(ASYNC_INITIAL_CAPACITY, 1024)
 
@@ -104,11 +104,6 @@ poll :: proc(self: ^Scheduler) {
 		}
 	}
 	runtime.clear(&self.finished)
-}
-
-spawn :: proc {
-	spawn_with_data,
-	spawn_without_data,
 }
 
 spawn_with_data :: proc(

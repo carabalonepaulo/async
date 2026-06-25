@@ -1,7 +1,7 @@
 package main
 
-import "async:http"
-import async "async:scheduler"
+import "../async"
+import "../async/http"
 
 import "core:fmt"
 import "core:time"

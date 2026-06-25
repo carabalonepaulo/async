@@ -1,11 +1,11 @@
-package scheduler
+package async
 
-import "async:storage"
 import "core:container/queue"
 import "core:time"
 
-import "../coro"
-import tw "../time_wheel"
+import "coro"
+import "storage"
+import tw "time_wheel"
 
 @(private)
 Case :: struct {

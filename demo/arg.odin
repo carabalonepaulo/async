@@ -1,6 +1,6 @@
 package main
 
-import async "async:scheduler"
+import "../async"
 import "core:fmt"
 import "core:time"
 

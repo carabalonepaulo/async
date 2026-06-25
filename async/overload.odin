@@ -1,4 +1,4 @@
-package scheduler
+package async
 
 init :: proc {
 	scheduler_init,
@@ -18,5 +18,10 @@ send :: proc {
 recv :: proc {
 	scheduler_recv,
 	chan_recv,
+}
+
+spawn :: proc {
+	spawn_with_data,
+	spawn_without_data,
 }
 

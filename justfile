@@ -1,2 +1,2 @@
 run:
-    @odin run demo -collection:async=./async
+    @odin run demo
