@@ -1,5 +1,7 @@
 package async
 
+import "base:builtin"
+import "base:runtime"
 import "core:container/queue"
 import "core:fmt"
 import "core:time"
@@ -212,6 +214,38 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 
 	for c in cases do remove_waiter(c.receivers, handle)
 	return idx
+}
+
+join :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
+	if builtin.len(cases) == 0 do return 0
+
+	sched := get_instance()
+	total := builtin.len(cases)
+
+	active_cases := make([]Case, total)
+	defer delete(active_cases)
+	copy(active_cases, cases)
+
+	remaining := total
+	start_time := time.now()
+	has_timeout := timeout >= 0
+	time_left := timeout
+
+	for remaining > 0 {
+		if has_timeout && time_left <= 0 do break
+
+		idx := select(active_cases[:remaining], timeout = time_left)
+		if idx == -1 do break
+
+		if idx >= 0 {
+			remaining -= 1
+			if idx < remaining do active_cases[idx] = active_cases[remaining]
+		}
+
+		if has_timeout do time_left = timeout - time.since(start_time)
+	}
+
+	return remaining
 }
 
 @(private)
