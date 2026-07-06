@@ -20,10 +20,6 @@ coroutine :: proc(client: ^http.Client) {
 }
 
 http_demo :: proc() {
-	sched: async.Scheduler
-	async.init(&sched)
-	defer async.deinit(&sched)
-
 	client: http.Client
 	init_err := http.init(&client)
 	if init_err != .None {
@@ -32,10 +28,10 @@ http_demo :: proc() {
 	}
 	defer http.deinit(&client)
 
-	async.spawn(&sched, &client, coroutine)
+	async.spawn(&client, coroutine)
 
-	for async.get_pending(&sched) > 0 {
-		async.poll(&sched)
+	for async.get_pending() > 0 {
+		async.poll()
 		http.poll(&client)
 		time.sleep(1 * time.Millisecond)
 	}

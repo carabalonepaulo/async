@@ -25,20 +25,18 @@ ch_consumer :: proc(ch: ^async.Chan(int)) {
 }
 
 ch_producer_consumer_demo :: proc() {
-	sched: async.Scheduler
-	async.init(&sched)
-	defer async.deinit(&sched)
-
 	ch: async.Chan(int)
-	async.init(&sched, &ch)
+	async.init(&ch)
 	defer async.deinit(&ch)
 
-	consumer := async.spawn(&sched, &ch, ch_consumer)
-	async.spawn(&sched, Arg{consumer, &ch}, ch_producer)
+	consumer := async.spawn(&ch, ch_consumer)
+	async.spawn(Arg{consumer, &ch}, ch_producer)
 
-	for async.get_pending(&sched) > 0 {
-		async.poll(&sched)
+	for async.get_pending() > 0 {
+		async.poll()
 		time.sleep(1 * time.Millisecond)
 	}
+
+	async.clear(&ch)
 }
 

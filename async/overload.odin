@@ -3,11 +3,8 @@ package async
 init :: proc {
 	scheduler_init,
 	chan_init,
-	chan_init_from_coro,
 	signal_init,
-	signal_init_from_coro,
 	cancel_token_init,
-	cancel_token_init_from_coro,
 }
 
 deinit :: proc {

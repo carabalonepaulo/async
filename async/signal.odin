@@ -7,12 +7,8 @@ Empty :: struct {}
 
 Signal :: distinct Chan(Empty)
 
-signal_init :: proc(sched: ^Scheduler, self: ^Signal) {
-	chan_init(sched, (^Chan(Empty))(self))
-}
-
-signal_init_from_coro :: proc(self: ^Signal) {
-	chan_init_from_coro((^Chan(Empty))(self))
+signal_init :: proc(self: ^Signal) {
+	chan_init((^Chan(Empty))(self))
 }
 
 signal_branch :: proc(self: ^Signal) -> Case {

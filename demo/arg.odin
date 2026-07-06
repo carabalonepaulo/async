@@ -15,15 +15,11 @@ arg_coro :: proc(person: Person) {
 }
 
 arg_demo :: proc() {
-	sched: async.Scheduler
-	async.init(&sched)
-	defer async.deinit(&sched)
-
 	person := Person{"Soreto", 30}
-	async.spawn(&sched, person, arg_coro)
+	async.spawn(person, arg_coro)
 
-	for async.get_pending(&sched) > 0 {
-		async.poll(&sched)
+	for async.get_pending() > 0 {
+		async.poll()
 		time.sleep(1 * time.Millisecond)
 	}
 }

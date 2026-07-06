@@ -3,7 +3,6 @@ package async
 import "base:builtin"
 import "base:runtime"
 import "core:container/queue"
-import "core:fmt"
 import "core:time"
 
 import "coro"
@@ -42,27 +41,24 @@ Chan :: struct($T: typeid) {
 
 Chan_Handle :: distinct u64
 
-chan_init :: proc(sched: ^Scheduler, self: ^Chan($T), cap := 16) {
+chan_init :: proc(self: ^Chan($T), cap := 16) {
+	sched := get_instance()
 	queue.init(&self.receivers, 1)
 	queue.init(&self.items, cap)
 	self.id = storage.add(&sched.channels, true)
 	self.sched = sched
 }
 
-chan_init_from_coro :: proc(self: ^Chan($T), cap := 16) {
-	sched := get_instance()
-	chan_init(sched, self, cap)
-}
-
 chan_deinit :: proc(self: ^Chan($T)) {
 	storage.remove(&self.sched.channels, self.id)
+	sched := get_instance()
 
 	for self.receivers.len > 0 {
 		waiter := queue.pop_front(&self.receivers)
 		if waiter.case_idx == -1 {
 			send(waiter.handle, Result(T){ok = false})
 		} else {
-			ud, ok := storage.get(&waiter.handle.sched.slots, waiter.handle.id)
+			ud, ok := storage.get(&sched.slots, u64(waiter.handle))
 			if !ok do continue
 			if coro.get_bytes_stored(ud.co) > 0 do continue
 			send(waiter.handle, -(waiter.case_idx + 1))
@@ -77,6 +73,7 @@ chan_deinit :: proc(self: ^Chan($T)) {
 
 chan_send :: proc(self: ^Chan($T), value: T) {
 	assert(is_chan_alive(self), "cannot send to a closed or uninitialized channel")
+	sched := get_instance()
 
 	for self.receivers.len > 0 {
 		waiter := queue.pop_front(&self.receivers)
@@ -86,7 +83,7 @@ chan_send :: proc(self: ^Chan($T), value: T) {
 			return
 		}
 
-		ud, ok := storage.get(&waiter.handle.sched.slots, waiter.handle.id)
+		ud, ok := storage.get(&sched.slots, u64(waiter.handle))
 		if !ok do continue
 		if coro.get_bytes_stored(ud.co) > 0 do continue
 
@@ -181,8 +178,8 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 	if timeout == 0 do return -1
 
 	handle := get_handle()
-	timer_id := storage.add(&handle.sched.sleeping, handle)
-	tw.after(&handle.sched.time_wheel, timeout, tw.Task(timer_id))
+	timer_id := storage.add(&sched.sleeping, handle)
+	tw.after(&sched.time_wheel, timeout, tw.Task(timer_id))
 
 	for c, i in cases {
 		waiter := Waiter {
@@ -200,7 +197,7 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 
 	if coro.get_bytes_stored(ud.co) >= size_of(int) {
 		raw_idx := pop(int)
-		storage.remove(&handle.sched.sleeping, timer_id)
+		storage.remove(&sched.sleeping, timer_id)
 
 		if raw_idx < 0 {
 			idx = (-raw_idx) - 1
@@ -253,7 +250,7 @@ remove_waiter :: proc(q: ^queue.Queue(Waiter), handle: Handle) {
 	size := q.len
 	for _ in 0 ..< size {
 		waiter := queue.pop_front(q)
-		if waiter.handle.id != handle.id do queue.enqueue(q, waiter)
+		if waiter.handle != handle do queue.enqueue(q, waiter)
 	}
 }
 

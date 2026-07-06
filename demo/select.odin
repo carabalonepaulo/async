@@ -47,22 +47,18 @@ consumer_select :: proc(arg: Select_Arg) {
 }
 
 select_demo :: proc() {
-	sched: async.Scheduler
-	async.init(&sched)
-	defer async.deinit(&sched)
-
 	ch_a: async.Chan(int)
 	ch_b: async.Chan(int)
 
-	async.init(&sched, &ch_a); defer async.deinit(&ch_a)
-	async.init(&sched, &ch_b); defer async.deinit(&ch_b)
+	async.init(&ch_a); defer async.deinit(&ch_a)
+	async.init(&ch_b); defer async.deinit(&ch_b)
 
-	async.spawn(&sched, &ch_a, producer_a)
-	async.spawn(&sched, &ch_b, producer_b)
-	async.spawn(&sched, Select_Arg{&ch_a, &ch_b}, consumer_select)
+	async.spawn(&ch_a, producer_a)
+	async.spawn(&ch_b, producer_b)
+	async.spawn(Select_Arg{&ch_a, &ch_b}, consumer_select)
 
-	for async.get_pending(&sched) > 0 {
-		async.poll(&sched)
+	for async.get_pending() > 0 {
+		async.poll()
 		time.sleep(1 * time.Millisecond)
 	}
 

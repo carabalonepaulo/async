@@ -19,21 +19,17 @@ small_interval :: proc() {
 }
 
 sleep_demo :: proc() {
-	sched: async.Scheduler
-	async.init(&sched)
-	defer async.deinit(&sched)
-
 	fmt.println("[main] should sleep for 3s")
-	async.spawn(&sched, 3, task)
+	async.spawn(3, task)
 
 	fmt.println("[main] should sleep for 5s")
-	async.spawn(&sched, 5, task)
+	async.spawn(5, task)
 
-	fmt.println("[main] should tick 5 times")
-	async.spawn(&sched, small_interval)
+	fmt.println("[main] shoul tick 5 times")
+	async.spawn(small_interval)
 
-	for async.get_pending(&sched) > 0 {
-		async.poll(&sched)
+	for async.get_pending() > 0 {
+		async.poll()
 		time.sleep(1 * time.Millisecond)
 	}
 

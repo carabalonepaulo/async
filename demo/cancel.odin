@@ -35,22 +35,18 @@ signal_select :: proc(arg: Signal_Arg) {
 }
 
 signal_demo :: proc() {
-	sched: async.Scheduler
-	async.init(&sched)
-	defer async.deinit(&sched)
-
 	ch: async.Chan(int)
 	cancel: async.Cancellation_Token
 
-	async.init(&sched, &ch); defer async.deinit(&ch)
-	async.init(&sched, &cancel)
+	async.init(&ch); defer async.deinit(&ch)
+	async.init(&cancel)
 	async.trigger(&cancel)
 
-	async.spawn(&sched, &ch, signal_producer)
-	async.spawn(&sched, Signal_Arg{&ch, &cancel}, signal_select)
+	async.spawn(&ch, signal_producer)
+	async.spawn(Signal_Arg{&ch, &cancel}, signal_select)
 
-	for async.get_pending(&sched) > 0 {
-		async.poll(&sched)
+	for async.get_pending() > 0 {
+		async.poll()
 		time.sleep(1 * time.Millisecond)
 	}
 
