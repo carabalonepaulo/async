@@ -28,11 +28,7 @@ sleep_demo :: proc() {
 	fmt.println("[main] shoul tick 5 times")
 	async.spawn(small_interval)
 
-	for async.get_pending() > 0 {
-		async.poll()
-		time.sleep(1 * time.Millisecond)
-	}
-
+	async.run(1 * time.Millisecond)
 	fmt.println("[main] quit")
 }
 

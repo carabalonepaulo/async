@@ -22,10 +22,6 @@ consumer :: proc() {
 producer_consumer_demo :: proc() {
 	consumer := async.spawn(consumer)
 	async.spawn(consumer, producer)
-
-	for async.get_pending() > 0 {
-		async.poll()
-		time.sleep(1 * time.Millisecond)
-	}
+	async.run(1 * time.Millisecond)
 }
 

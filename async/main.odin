@@ -82,6 +82,21 @@ scheduler_deinit :: proc() {
 	delete(scheduler.finished)
 }
 
+scheduler_run :: proc(sleep: time.Duration = 0) {
+	for get_pending() > 0 {
+		poll()
+		if sleep > 0 do time.sleep(sleep)
+	}
+}
+
+scheduler_run_with_poly :: proc(arg: $T, tick: proc(arg: T), sleep: time.Duration = 0) {
+	for get_pending() > 0 {
+		tick(arg)
+		poll()
+		if sleep > 0 do time.sleep(sleep)
+	}
+}
+
 poll :: proc() {
 	for queue.len(scheduler.ready) > 0 {
 		task_id := queue.pop_front(&scheduler.ready)

@@ -45,10 +45,7 @@ signal_demo :: proc() {
 	async.spawn(&ch, signal_producer)
 	async.spawn(Signal_Arg{&ch, &cancel}, signal_select)
 
-	for async.get_pending() > 0 {
-		async.poll()
-		time.sleep(1 * time.Millisecond)
-	}
+	async.run(1 * time.Millisecond)
 
 	async.clear(&ch)
 	async.clear(&cancel)

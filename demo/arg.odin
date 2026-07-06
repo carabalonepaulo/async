@@ -17,10 +17,6 @@ arg_coro :: proc(person: Person) {
 arg_demo :: proc() {
 	person := Person{"Soreto", 30}
 	async.spawn(person, arg_coro)
-
-	for async.get_pending() > 0 {
-		async.poll()
-		time.sleep(1 * time.Millisecond)
-	}
+	async.run(1 * time.Millisecond)
 }
 

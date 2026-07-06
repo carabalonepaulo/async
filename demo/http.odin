@@ -29,11 +29,6 @@ http_demo :: proc() {
 	defer http.deinit(&client)
 
 	async.spawn(&client, coroutine)
-
-	for async.get_pending() > 0 {
-		async.poll()
-		http.poll(&client)
-		time.sleep(1 * time.Millisecond)
-	}
+	async.run(&client, http.poll, 1 * time.Millisecond)
 }
 

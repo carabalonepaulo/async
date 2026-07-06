@@ -57,10 +57,7 @@ select_demo :: proc() {
 	async.spawn(&ch_b, producer_b)
 	async.spawn(Select_Arg{&ch_a, &ch_b}, consumer_select)
 
-	for async.get_pending() > 0 {
-		async.poll()
-		time.sleep(1 * time.Millisecond)
-	}
+	async.run(1 * time.Millisecond)
 
 	async.clear(&ch_a)
 	async.clear(&ch_b)
