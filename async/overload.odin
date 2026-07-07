@@ -2,15 +2,10 @@ package async
 
 init :: proc {
 	scheduler_init,
-// chan_init,
-// signal_init,
-// cancel_token_init,
 }
 
 deinit :: proc {
 	scheduler_deinit,
-// chan_deinit,
-// signal_deinit,
 }
 
 destroy :: proc {
@@ -18,9 +13,17 @@ destroy :: proc {
 	signal_destroy,
 }
 
+try_send :: proc {
+	chan_try_send,
+}
+
 send :: proc {
 	scheduler_send,
 	chan_send,
+}
+
+try_recv :: proc {
+	chan_try_recv,
 }
 
 recv :: proc {

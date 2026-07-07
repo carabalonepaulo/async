@@ -2,6 +2,7 @@ package http
 
 import "base:runtime"
 import "core:c"
+import "core:container/queue"
 import "core:fmt"
 import "core:mem"
 import "core:strings"
@@ -11,11 +12,19 @@ import async ".."
 
 CA_PEM :: #load("cacert.pem")
 
+CA_PEM_BLOB := curl.blob {
+	data = raw_data(CA_PEM),
+	len  = len(CA_PEM),
+}
+
+// CA_PEM := cstring(raw_data(CA_PEM_STR))
+
 Error :: enum {
 	None,
 	Easy_Init_Failed,
 	Multi_Init_Failed,
 	Perform_Failed,
+	Impersonate_Failed,
 }
 
 Method :: enum {
@@ -25,19 +34,39 @@ Method :: enum {
 
 Http_Callback :: #type proc(resp: ^Response, err: Error, user_data: rawptr)
 
+Request :: struct {
+	method:  Method,
+	url:     string,
+	headers: map[string]string,
+	body:    []u8,
+	id:      int,
+	out:     async.Chan(Result),
+	cancel:  Maybe(async.Cancellation_Token),
+}
+
+Result :: struct {
+	id:   int,
+	resp: ^Response,
+	err:  Error,
+}
+
 Request_Task :: struct {
-	resp:    ^Response,
-	h_state: ^Header_State,
-	w_state: ^Write_State,
-	slist:   ^curl.slist,
-	c_url:   cstring,
-	handle:  async.Handle,
+	resp:      ^Response,
+	h_state:   ^Header_State,
+	w_state:   ^Write_State,
+	slist:     ^curl.slist,
+	c_url:     cstring,
+	id:        int,
+	out:       async.Chan(Result),
+	cancel:    Maybe(async.Cancellation_Token),
+	allocator: mem.Allocator,
 }
 
 Client :: struct {
 	allocator:       mem.Allocator,
 	multi:           ^curl.CURLM,
 	active_requests: map[^curl.CURL]Request_Task,
+	cleanup:         queue.Queue(^curl.CURL),
 }
 
 Header :: struct {
@@ -70,6 +99,7 @@ init :: proc(self: ^Client, allocator := context.allocator) -> Error {
 	}
 
 	self.active_requests = make(map[^curl.CURL]Request_Task, 16, allocator)
+	queue.init(&self.cleanup)
 
 	return .None
 }
@@ -81,56 +111,41 @@ deinit :: proc(self: ^Client) {
 	delete(self.active_requests)
 }
 
-get :: proc(self: ^Client, url: string) -> (^Response, Error) {
-	return fetch(self, .Get, url, nil, nil)
-}
-
-fetch :: proc(
-	self: ^Client,
-	method: Method,
-	url: string,
-	headers: map[string]string,
-	body: []u8,
-) -> (
-	resp: ^Response,
-	err: Error,
-) {
+fetch :: proc(self: ^Client, req: Request) {
 	easy_handle := curl.easy_init()
 	if easy_handle == nil {
-		return nil, .Easy_Init_Failed
+		async.send(req.out, Result{id = req.id, err = .Easy_Init_Failed})
+		return
 	}
 
-	curl.easy_setopt(
-		easy_handle,
-		.CAINFO_BLOB,
-		curl.blob{data = raw_data(CA_PEM), len = len(CA_PEM), flags = curl.blob_flags{.COPY}},
-	)
+	curl.easy_setopt(easy_handle, .CAINFO_BLOB, &CA_PEM_BLOB)
 	curl.easy_setopt(easy_handle, .ACCEPT_ENCODING, cstring(""))
 
-	c_url := strings.clone_to_cstring(url, self.allocator)
+	c_url := strings.clone_to_cstring(req.url, self.allocator)
 	curl.easy_setopt(easy_handle, .URL, c_url)
 
 	slist: ^curl.slist = nil
-	if headers != nil {
-		for key, value in headers {
+	if req.headers != nil {
+		for key, value in req.headers {
 			h_str := fmt.aprintf("%s: %s", key, value, self.allocator)
+			defer delete(h_str, self.allocator)
 			slist = curl.slist_append(slist, strings.clone_to_cstring(h_str, self.allocator))
 		}
 		curl.easy_setopt(easy_handle, .HTTPHEADER, slist)
 	}
 
-	switch method {
+	switch req.method {
 	case .Get:
 		curl.easy_setopt(easy_handle, .HTTPGET, i32(1))
 	case .Post:
 		curl.easy_setopt(easy_handle, .POST, i32(1))
-		if len(body) > 0 {
-			curl.easy_setopt(easy_handle, .POSTFIELDS, raw_data(body))
-			curl.easy_setopt(easy_handle, .POSTFIELDSIZE, curl.off_t(len(body)))
+		if len(req.body) > 0 {
+			curl.easy_setopt(easy_handle, .POSTFIELDS, raw_data(req.body))
+			curl.easy_setopt(easy_handle, .POSTFIELDSIZE, curl.off_t(len(req.body)))
 		}
 	}
 
-	resp = new(Response, self.allocator)
+	resp := new(Response, self.allocator)
 	resp.allocator = self.allocator
 	resp.body = make([dynamic]u8, self.allocator)
 	resp.headers = make([dynamic]Header, self.allocator)
@@ -154,26 +169,40 @@ fetch :: proc(
 		delete(c_url, self.allocator)
 		destroy(resp)
 		curl.easy_cleanup(easy_handle)
-		return nil, .Perform_Failed
+
+		async.send(req.out, Result{id = req.id, err = .Perform_Failed})
+		return
 	}
 
 	self.active_requests[easy_handle] = Request_Task {
-		resp    = resp,
-		h_state = header_state,
-		w_state = write_state,
-		slist   = slist,
-		c_url   = c_url,
-		handle  = async.get_handle(),
+		resp      = resp,
+		h_state   = header_state,
+		w_state   = write_state,
+		slist     = slist,
+		c_url     = c_url,
+		id        = req.id,
+		out       = req.out,
+		cancel    = req.cancel,
+		allocator = self.allocator,
 	}
-
-	final_err := async.recv(Error)
-	if final_err != .None do return nil, final_err
-	return resp, .None
 }
 
 poll :: proc(self: ^Client) {
 	if self.multi == nil do return
 	if len(self.active_requests) == 0 do return
+
+	for easy_handle, task in self.active_requests {
+		cancel, ok := task.cancel.(async.Cancellation_Token)
+		if !ok do continue
+		if !async.is_triggered(cancel) do continue
+
+		queue.enqueue(&self.cleanup, easy_handle)
+	}
+
+	for queue.len(self.cleanup) > 0 {
+		easy_handle := queue.dequeue(&self.cleanup)
+		cleanup_request(self, easy_handle, true)
+	}
 
 	still_running: i32 = 0
 	m_err := curl.multi_perform(self.multi, &still_running)
@@ -195,18 +224,8 @@ poll :: proc(self: ^Client) {
 					curl.easy_getinfo(easy_handle, .RESPONSE_CODE, &task.resp.status)
 				}
 
-				async.send(task.handle, err)
-
-				curl.multi_remove_handle(self.multi, easy_handle)
-				curl.easy_cleanup(easy_handle)
-
-				if task.c_url != nil do delete(task.c_url, self.allocator)
-				if task.slist != nil do curl.slist_free_all(task.slist)
-
-				free(task.h_state, self.allocator)
-				free(task.w_state, self.allocator)
-
-				delete_key(&self.active_requests, easy_handle)
+				async.send(task.out, Result{id = task.id, resp = task.resp, err = err})
+				cleanup_request(self, easy_handle, false)
 			}
 		}
 
@@ -214,7 +233,12 @@ poll :: proc(self: ^Client) {
 	}
 }
 
-destroy :: proc(self: ^Response) {
+destroy :: proc {
+	response_destroy,
+	task_destroy,
+}
+
+response_destroy :: proc(self: ^Response) {
 	if self == nil do return
 	context.allocator = self.allocator
 	if self.headers != nil {
@@ -228,6 +252,26 @@ destroy :: proc(self: ^Response) {
 		delete(self.body)
 	}
 	free(self)
+}
+
+task_destroy :: proc(task: ^Request_Task) {
+	if task.c_url != nil do delete(task.c_url, task.allocator)
+	if task.slist != nil do curl.slist_free_all(task.slist)
+
+	free(task.h_state, task.allocator)
+	free(task.w_state, task.allocator)
+}
+
+@(private)
+cleanup_request :: proc(self: ^Client, easy_handle: ^curl.CURL, destroy_resp: bool) {
+	curl.multi_remove_handle(self.multi, easy_handle)
+	curl.easy_cleanup(easy_handle)
+
+	task := self.active_requests[easy_handle]
+	if destroy_resp do destroy(task.resp)
+	destroy(&task)
+
+	delete_key(&self.active_requests, easy_handle)
 }
 
 @(private)

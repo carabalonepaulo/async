@@ -7,15 +7,31 @@ import "core:fmt"
 import "core:time"
 
 coroutine :: proc(client: ^http.Client) {
-	resp, err := http.get(client, "https://jsonplaceholder.typicode.com/posts/1")
-	defer if err == .None do http.destroy(resp)
+	out := async.create_chan(http.Result); defer async.destroy(out)
 
-	if err == .None {
-		fmt.printfln("status: %v", resp.status)
-		fmt.printfln("headers: %v", resp.headers[:])
-		fmt.printfln("body: %v", string(resp.body[:]))
-	} else {
-		fmt.printfln("request failed with error: %v", err)
+	cancel := async.create_cancel_token()
+	async.cancel_after(cancel, 1 * time.Second)
+
+	http.fetch(
+		client,
+		http.Request {
+			method = .Get,
+			url = "https://httpbin.org/delay/5",
+			out = out,
+			cancel = cancel,
+		},
+	)
+
+	res: http.Result
+	idx := async.select({async.branch(out, &res), async.branch(cancel)})
+
+	switch idx {
+	case -1:
+		fmt.println("select timeout")
+	case 0:
+		fmt.printfln("request completed, is err %v", res.err != .None)
+	case 1:
+		fmt.println("request cancelled (timeout with cancel_after)")
 	}
 }
 

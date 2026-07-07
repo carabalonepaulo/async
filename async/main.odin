@@ -3,8 +3,11 @@ package async
 import "base:builtin"
 import "base:runtime"
 import "core:c"
+import "core:container/intrusive/list"
 import "core:container/queue"
+import "core:fmt"
 import "core:mem"
+import "core:slice"
 import "core:time"
 
 import "coro"
@@ -48,12 +51,13 @@ scheduler_send :: proc(self: Handle, value: $T) {
 }
 
 Scheduler :: struct {
-	slots:      storage.Storage(^User_Data),
-	ready:      queue.Queue(u64),
-	sleeping:   storage.Storage(Handle),
-	channels:   storage.Storage(rawptr),
-	time_wheel: tw.Time_Wheel,
-	finished:   [dynamic]tw.Task,
+	slots:                storage.Storage(^User_Data),
+	ready:                queue.Queue(u64),
+	sleeping:             storage.Storage(Handle),
+	channels:             storage.Storage(rawptr),
+	active_cancel_tokens: map[u64]bool,
+	time_wheel:           tw.Time_Wheel,
+	finished:             [dynamic]tw.Task,
 }
 
 @(thread_local)
@@ -65,11 +69,15 @@ scheduler_init :: proc() {
 	storage.init(&scheduler.sleeping, INITIAL_CAPACITY)
 	storage.init(&scheduler.channels, INITIAL_CAPACITY)
 
+	scheduler.active_cancel_tokens = make(map[u64]bool)
+
 	tw.init(&scheduler.time_wheel, 1 * time.Millisecond)
 	scheduler.finished = make([dynamic]tw.Task)
 }
 
 scheduler_deinit :: proc() {
+	destroy_cancel_tokens()
+
 	assert(storage.count(&scheduler.slots) == 0, "scheduler has pending tasks")
 	assert(storage.count(&scheduler.channels) == 0, "scheduler has active channels")
 

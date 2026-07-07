@@ -223,8 +223,12 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 	if timeout == 0 do return -1
 
 	handle := get_handle()
-	timer_id := storage.add(&sched.sleeping, handle)
-	tw.after(&sched.time_wheel, timeout, tw.Task(timer_id))
+
+	timer_id: u64
+	if timeout > 0 {
+		timer_id = storage.add(&sched.sleeping, handle)
+		tw.after(&sched.time_wheel, timeout, tw.Task(timer_id))
+	}
 
 	for c, i in cases {
 		waiter := Waiter {
