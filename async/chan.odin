@@ -264,7 +264,7 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 	return idx
 }
 
-join :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
+all :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 	if builtin.len(cases) == 0 do return 0
 
 	sched := get_scheduler()

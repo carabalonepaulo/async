@@ -1,89 +1,130 @@
 # async
 
-Extensible coroutine scheduler for Odin built on top of minicoro.
+A lightweight stackful coroutine runtime for Odin.
 
-## Overview
+`async` is a cooperative, thread-local runtime built on top of minicoro. It provides stackful coroutines, channels, event selection, timers and cancellation primitives while remaining explicit, predictable and easy to integrate with external systems.
 
-`async` is a single-threaded cooperative scheduler for Odin based on stackful coroutines provided by minicoro.
-
-The library is designed around a small core scheduler that can be extended with additional asynchronous primitives such as timers, networking, databases, and filesystem operations.
+The runtime is designed for stateful applications such as game servers, simulations and event-driven systems where explicit ownership and deterministic execution are preferred over implicit multithreading.
 
 ## Features
 
-- Single-threaded cooperative scheduling
-- Stackful coroutines via minicoro
-- Task spawning
-- Coroutine suspension and resumption
-- Built-in sleep support
-- Extensible wake/scheduler architecture
-- No global scheduler state
-- Multiple scheduler instances supported
+- Stackful coroutines
+- Cooperative scheduling
+- Thread-local scheduler
+- Channels
+- `select` (wait for any)
+- `all` (wait for all)
+- Timers and `sleep`
+- Cancellation tokens
+- Broadcast signals
+- Coroutine mailboxes
+- No hidden threads
+- Explicit resource lifetime
 
 ## Example
 
 ```odin
-package main
+coroutine :: proc(client: ^http.Client) {
+	out := async.create_chan(http.Result)
+	defer async.destroy(out)
 
-import async "async:scheduler"
-import "core:fmt"
-import "core:time"
+	cancel := async.create_cancel_token()
+	async.cancel_after(cancel, 1 * time.Millisecond)
 
-producer :: proc(handle: async.Handle) {
-	for i in 1 ..= 5 {
-		fmt.println("[producer] sent", i)
-		async.send(handle, i)
-		async.reschedule()
-	}
-}
+	http.fetch(client, http.Request{
+		method = .Get,
+		url = "https://httpbin.org/delay/5",
+		out = out,
+		cancel = cancel,
+	})
 
-consumer :: proc() {
-	for _ in 0 ..< 5 {
-		value := async.recv(int)
-		fmt.println("[consumer]", value)
+	res: http.Result
+
+	switch async.select({
+		async.branch(out, &res),
+		async.branch(cancel),
+	}) {
+	case 0:
+		fmt.println("request completed")
+	case 1:
+		fmt.println("request cancelled")
 	}
 }
 
 main :: proc() {
-	sched: async.Scheduler
-	async.init(&sched)
-	defer async.deinit(&sched)
+	async.init()
+	defer async.deinit()
 
-	consumer := async.spawn(&sched, consumer)
-	async.spawn(&sched, consumer, producer)
+	client: http.Client
+	http.init(&client)
+	defer http.deinit(&client)
 
-	for async.get_pending(&sched) > 0 {
-		async.poll(&sched)
-		time.sleep(1 * time.Millisecond)
-	}
+	async.spawn(&client, coroutine)
+	async.run(&client, http.poll, 1 * time.Millisecond)
 }
 ```
 
-## Design
+## Runtime model
 
-The scheduler itself intentionally remains simple.
+A scheduler owns every coroutine, channel, timer and synchronization primitive created inside it.
 
-Tasks suspend themselves through coroutine yields and are resumed through lightweight wakers. External systems can integrate with the scheduler by storing a `Waker` and invoking it once an operation completes.
+Schedulers are thread-local and never migrate work between threads.
 
-This design allows asynchronous primitives to be implemented outside the scheduler core.
+This provides:
 
-## Goals
+- predictable execution
+- explicit ownership
+- lock-free scheduler internals
+- resource validation through generational handles
 
-- Small API surface
-- Explicit scheduler ownership
-- No hidden threads
-- No mandatory synchronization primitives
-- Easy integration with event-driven systems
-- Predictable execution model
+Parallelism is achieved by running multiple schedulers on different threads rather than sharing a scheduler across threads.
 
-## Non-Goals
+## Building blocks
 
-- Preemptive scheduling
-- Work stealing
-- Implicit multithreading
-- Future/Promise abstractions
+The runtime intentionally exposes only a small number of primitives.
+
+- Coroutines
+- Channels
+- Timers
+
+Higher-level abstractions are implemented on top of them.
+
+- `select`
+- `all`
+- `Signal`
+- `Cancellation_Token`
+
+## Resource management
+
+Resources created through the scheduler must be explicitly destroyed.
+
+```odin
+ch := async.create_chan(int)
+defer async.destroy(ch)
+```
+
+The only exception is `Cancellation_Token`, which is automatically cleaned up during scheduler shutdown if left alive.
+
+## Philosophy
+
+`async` is intentionally not an async/await runtime.
+
+It does not provide:
+
+- futures
+- promises
+- work stealing
+- automatic thread pools
+- implicit synchronization
+
+Instead it focuses on:
+
+- explicit ownership
+- cooperative execution
+- composable primitives
+- easy integration with external event loops
+- deterministic behavior
 
 ## Status
 
-Early development.
-
-The scheduler core and timer support are functional, but APIs may change as additional asynchronous primitives are added.
+The public API is approaching stability, although performance optimizations are still ongoing.

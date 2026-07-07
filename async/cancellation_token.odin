@@ -23,11 +23,6 @@ is_triggered :: #force_inline proc(self: Cancellation_Token) -> bool {
 	return !is_chan_alive_by_id(self.id)
 }
 
-Cancel_After_Payload :: struct {
-	self:     Cancellation_Token,
-	duration: time.Duration,
-}
-
 cancel_after :: proc(self: Cancellation_Token, duration: time.Duration) {
 	timer(duration, proc(ud: rawptr) {
 			id := transmute(u64)(ud)
