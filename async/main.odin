@@ -195,7 +195,7 @@ get_user_data :: #force_inline proc() -> ^User_Data {
 	return (^User_Data)(coro.get_user_data(coro.running()))
 }
 
-get_instance :: #force_inline proc() -> ^Scheduler {
+get_scheduler :: #force_inline proc() -> ^Scheduler {
 	return &scheduler
 }
 

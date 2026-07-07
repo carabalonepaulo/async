@@ -50,21 +50,13 @@ create_chan :: proc($T: typeid, cap := 16) -> Chan(T) {
 	queue.init(&inner.receivers, 1)
 	queue.init(&inner.items, cap)
 
-	sched := get_instance()
+	sched := get_scheduler()
 	id := storage.add(&sched.channels, rawptr(inner))
 	return Chan(T){id = id}
 }
 
-// chan_init :: proc(self: ^Inner_Chan($T), cap := 16) {
-// 	sched := get_instance()
-// 	queue.init(&self.receivers, 1)
-// 	queue.init(&self.items, cap)
-// 	self.id = storage.add(&sched.channels, true)
-// 	self.sched = sched
-// }
-
 chan_destroy :: proc(self: Chan($T)) {
-	sched := get_instance()
+	sched := get_scheduler()
 	ptr, ok := storage.remove(&sched.channels, self.id)
 	if !ok do return
 
@@ -86,13 +78,15 @@ chan_destroy :: proc(self: Chan($T)) {
 
 	queue.destroy(&inner.receivers)
 	queue.destroy(&inner.items)
+
+	free(inner)
 }
 
 chan_send :: proc(self: Chan($T), value: T) {
 	inner := get_inner(self)
 	assert(inner != nil, "cannot send to a closed or uninitialized channel")
 
-	sched := get_instance()
+	sched := get_scheduler()
 
 	for inner.receivers.len > 0 {
 		waiter := queue.pop_front(&inner.receivers)
@@ -136,9 +130,15 @@ chan_recv :: proc(self: Chan($T)) -> (T, bool) {
 }
 
 drain :: proc(self: Chan($T)) -> (T, bool) {
-	assert(queue.len(self.receivers) == 0, "channel has active coroutines waiting to receive data")
-	if queue.len(self.items) > 0 {
-		result := queue.pop_front(&self.items)
+	inner := get_inner(self)
+	assert(inner != nil, "cannot drain a closed or uninitialized channel")
+	assert(
+		queue.len(inner.receivers) == 0,
+		"channel has active coroutines waiting to receive data",
+	)
+
+	if queue.len(inner.items) > 0 {
+		result := queue.pop_front(&inner.items)
 		return result.value, result.ok
 	}
 	return {}, false
@@ -193,7 +193,7 @@ default_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case
 }
 
 select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
-	sched := get_instance()
+	sched := get_scheduler()
 
 	for c, i in cases {
 		if !is_chan_alive(c.ch_id) {
@@ -228,7 +228,11 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 
 		if raw_idx < 0 {
 			idx = (-raw_idx) - 1
-			for c, i in cases do if i != idx do remove_waiter(c.receivers, handle)
+			for c, i in cases {
+				if i != idx && is_chan_alive(c.ch_id) {
+					remove_waiter(c.receivers, handle)
+				}
+			}
 			return idx
 		} else do idx = raw_idx
 		if cases[idx].out_ok_ptr != nil do cases[idx].out_ok_ptr^ = raw_idx >= 0
@@ -236,14 +240,14 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 		idx = -1
 	}
 
-	for c in cases do remove_waiter(c.receivers, handle)
+	for c in cases do if is_chan_alive(c.ch_id) do remove_waiter(c.receivers, handle)
 	return idx
 }
 
 join :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 	if builtin.len(cases) == 0 do return 0
 
-	sched := get_instance()
+	sched := get_scheduler()
 	total := builtin.len(cases)
 
 	active_cases := make([]Case, total)
@@ -289,33 +293,21 @@ is_chan_alive :: proc {
 
 @(private)
 is_chan_alive_by_id :: proc(id: u64) -> bool {
-	sched := get_instance()
-	_, ok := storage.get_ptr(&sched.channels, id)
+	sched := get_scheduler()
+	_, ok := storage.get(&sched.channels, id)
 	return ok
 }
 
 @(private)
-is_chan_alive_by_handle :: proc(chan: Chan($T)) -> bool {
+is_chan_alive_by_handle :: #force_inline proc(chan: Chan($T)) -> bool {
 	return is_chan_alive_by_id(chan.id)
 }
 
 @(private)
 get_inner :: proc(chan: Chan($T)) -> ^Inner_Chan(T) {
-	sched := get_instance()
+	sched := get_scheduler()
 	ptr, ok := storage.get(&sched.channels, chan.id)
 	if !ok do return nil
 	return (^Inner_Chan(T))(ptr)
 }
-
-// @(private)
-// is_chan_alive_by_ref :: #force_inline proc(self: Chan($T)) -> bool {
-// 	if self == nil do return false
-// 	return is_chan_alive_by_id(self.sched, self.id)
-// }
-
-// @(private)
-// is_chan_alive_by_id :: #force_inline proc(sched: ^Scheduler, chan_id: u64) -> bool {
-// 	_, ok := storage.get_ptr(&sched.channels, chan_id)
-// 	return ok
-// }
 
