@@ -6,7 +6,7 @@ import "core:time"
 
 Arg :: struct {
 	consumer_handle: async.Handle,
-	ch:              ^async.Chan(int),
+	ch:              async.Chan(int),
 }
 
 ch_producer :: proc(arg: Arg) {
@@ -17,7 +17,7 @@ ch_producer :: proc(arg: Arg) {
 	}
 }
 
-ch_consumer :: proc(ch: ^async.Chan(int)) {
+ch_consumer :: proc(ch: async.Chan(int)) {
 	for _ in 0 ..< 5 {
 		value, ok := async.recv(ch)
 		fmt.println("[consumer]", value, ok)
@@ -25,14 +25,12 @@ ch_consumer :: proc(ch: ^async.Chan(int)) {
 }
 
 ch_producer_consumer_demo :: proc() {
-	ch: async.Chan(int)
-	async.init(&ch)
-	defer async.deinit(&ch)
+	ch := async.create_chan(int); defer async.destroy(ch)
 
-	consumer := async.spawn(&ch, ch_consumer)
-	async.spawn(Arg{consumer, &ch}, ch_producer)
+	consumer := async.spawn(ch, ch_consumer)
+	async.spawn(Arg{consumer, ch}, ch_producer)
 
 	async.run(1 * time.Millisecond)
-	async.clear(&ch)
+	async.clear(ch)
 }
 

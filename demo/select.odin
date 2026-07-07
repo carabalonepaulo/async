@@ -5,18 +5,18 @@ import "core:fmt"
 import "core:time"
 
 Select_Arg :: struct {
-	ch_a: ^async.Chan(int),
-	ch_b: ^async.Chan(int),
+	ch_a: async.Chan(int),
+	ch_b: async.Chan(int),
 }
 
-producer_a :: proc(ch: ^async.Chan(int)) {
+producer_a :: proc(ch: async.Chan(int)) {
 	async.sleep(5 * time.Millisecond)
 	fmt.println("[A] sent", 3)
 	async.send(ch, 3)
 	fmt.println("[A] end")
 }
 
-producer_b :: proc(ch: ^async.Chan(int)) {
+producer_b :: proc(ch: async.Chan(int)) {
 	async.sleep(3 * time.Millisecond)
 	fmt.println("[B] sent", 5)
 	async.send(ch, 5)
@@ -47,19 +47,16 @@ consumer_select :: proc(arg: Select_Arg) {
 }
 
 select_demo :: proc() {
-	ch_a: async.Chan(int)
-	ch_b: async.Chan(int)
+	ch_a := async.create_chan(int); defer async.destroy(ch_a)
+	ch_b := async.create_chan(int); defer async.destroy(ch_b)
 
-	async.init(&ch_a); defer async.deinit(&ch_a)
-	async.init(&ch_b); defer async.deinit(&ch_b)
-
-	async.spawn(&ch_a, producer_a)
-	async.spawn(&ch_b, producer_b)
-	async.spawn(Select_Arg{&ch_a, &ch_b}, consumer_select)
+	async.spawn(ch_a, producer_a)
+	async.spawn(ch_b, producer_b)
+	async.spawn(Select_Arg{ch_a, ch_b}, consumer_select)
 
 	async.run(1 * time.Millisecond)
 
-	async.clear(&ch_a)
-	async.clear(&ch_b)
+	async.clear(ch_a)
+	async.clear(ch_b)
 }
 

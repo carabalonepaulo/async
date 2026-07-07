@@ -7,21 +7,24 @@ Empty :: struct {}
 
 Signal :: distinct Chan(Empty)
 
-signal_init :: proc(self: ^Signal) {
-	chan_init((^Chan(Empty))(self))
+create_signal :: proc() -> Signal {
+	return (Signal)(create_chan(Empty))
 }
 
-signal_branch :: proc(self: ^Signal) -> Case {
-	return default_branch((^Chan(Empty))(self))
+signal_branch :: proc(self: Signal) -> Case {
+	return default_branch((Chan(Empty))(self))
 }
 
-signal_deinit :: proc(self: ^Signal) {
-	chan_deinit((^Chan(Empty))(self))
+signal_destroy :: proc(self: Signal) {
+	chan_destroy((Chan(Empty))(self))
 }
 
-emit :: proc(self: ^Signal) {
-	ch := (^Chan(Empty))(self)
-	count := queue.len(ch.receivers)
+emit :: proc(self: Signal) {
+	ch := (Chan(Empty))(self)
+	inner := get_inner(ch)
+	if inner == nil do return
+
+	count := queue.len(inner.receivers)
 	for _ in 0 ..< count do chan_send(ch, Empty{})
 }
 

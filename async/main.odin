@@ -51,7 +51,7 @@ Scheduler :: struct {
 	slots:      storage.Storage(^User_Data),
 	ready:      queue.Queue(u64),
 	sleeping:   storage.Storage(Handle),
-	channels:   storage.Storage(bool),
+	channels:   storage.Storage(rawptr),
 	time_wheel: tw.Time_Wheel,
 	finished:   [dynamic]tw.Task,
 }

@@ -32,29 +32,46 @@ Result :: struct($T: typeid) {
 	ok:    bool,
 }
 
-Chan :: struct($T: typeid) {
+@(private)
+Inner_Chan :: struct($T: typeid) {
 	receivers: queue.Queue(Waiter),
 	items:     queue.Queue(Result(T)),
-	id:        u64,
-	sched:     ^Scheduler,
+}
+
+Chan :: struct($T: typeid) {
+	id:      u64,
+	_marker: [0]T,
 }
 
 Chan_Handle :: distinct u64
 
-chan_init :: proc(self: ^Chan($T), cap := 16) {
+create_chan :: proc($T: typeid, cap := 16) -> Chan(T) {
+	inner := new(Inner_Chan(T))
+	queue.init(&inner.receivers, 1)
+	queue.init(&inner.items, cap)
+
 	sched := get_instance()
-	queue.init(&self.receivers, 1)
-	queue.init(&self.items, cap)
-	self.id = storage.add(&sched.channels, true)
-	self.sched = sched
+	id := storage.add(&sched.channels, rawptr(inner))
+	return Chan(T){id = id}
 }
 
-chan_deinit :: proc(self: ^Chan($T)) {
-	storage.remove(&self.sched.channels, self.id)
-	sched := get_instance()
+// chan_init :: proc(self: ^Inner_Chan($T), cap := 16) {
+// 	sched := get_instance()
+// 	queue.init(&self.receivers, 1)
+// 	queue.init(&self.items, cap)
+// 	self.id = storage.add(&sched.channels, true)
+// 	self.sched = sched
+// }
 
-	for self.receivers.len > 0 {
-		waiter := queue.pop_front(&self.receivers)
+chan_destroy :: proc(self: Chan($T)) {
+	sched := get_instance()
+	ptr, ok := storage.remove(&sched.channels, self.id)
+	if !ok do return
+
+	inner := (^Inner_Chan(T))(ptr)
+
+	for inner.receivers.len > 0 {
+		waiter := queue.pop_front(&inner.receivers)
 		if waiter.case_idx == -1 {
 			send(waiter.handle, Result(T){ok = false})
 		} else {
@@ -65,18 +82,20 @@ chan_deinit :: proc(self: ^Chan($T)) {
 		}
 	}
 
-	assert(self.items.len == 0, "channel destroyed with unconsumed buffered items (leak)")
+	assert(inner.items.len == 0, "channel destroyed with unconsumed buffered items (leak)")
 
-	queue.destroy(&self.receivers)
-	queue.destroy(&self.items)
+	queue.destroy(&inner.receivers)
+	queue.destroy(&inner.items)
 }
 
-chan_send :: proc(self: ^Chan($T), value: T) {
-	assert(is_chan_alive(self), "cannot send to a closed or uninitialized channel")
+chan_send :: proc(self: Chan($T), value: T) {
+	inner := get_inner(self)
+	assert(inner != nil, "cannot send to a closed or uninitialized channel")
+
 	sched := get_instance()
 
-	for self.receivers.len > 0 {
-		waiter := queue.pop_front(&self.receivers)
+	for inner.receivers.len > 0 {
+		waiter := queue.pop_front(&inner.receivers)
 
 		if waiter.case_idx == -1 {
 			send(waiter.handle, Result(T){value, true})
@@ -93,12 +112,15 @@ chan_send :: proc(self: ^Chan($T), value: T) {
 		return
 	}
 
-	queue.enqueue(&self.items, Result(T){value, true})
+	queue.enqueue(&inner.items, Result(T){value, true})
 }
 
-chan_recv :: proc(self: ^Chan($T)) -> (T, bool) {
-	if self.items.len > 0 {
-		result := queue.pop_front(&self.items)
+chan_recv :: proc(self: Chan($T)) -> (T, bool) {
+	inner := get_inner(self)
+	assert(inner != nil, "cannot recv from a closed or uninitialized channel")
+
+	if inner.items.len > 0 {
+		result := queue.pop_front(&inner.items)
 		return result.value, result.ok
 	}
 
@@ -108,12 +130,12 @@ chan_recv :: proc(self: ^Chan($T)) -> (T, bool) {
 		case_idx = -1,
 	}
 
-	queue.enqueue(&self.receivers, waiter)
+	queue.enqueue(&inner.receivers, waiter)
 	result := recv(Result(T))
 	return result.value, result.ok
 }
 
-drain :: proc(self: ^Chan($T)) -> (T, bool) {
+drain :: proc(self: Chan($T)) -> (T, bool) {
 	assert(queue.len(self.receivers) == 0, "channel has active coroutines waiting to receive data")
 	if queue.len(self.items) > 0 {
 		result := queue.pop_front(&self.items)
@@ -122,28 +144,33 @@ drain :: proc(self: ^Chan($T)) -> (T, bool) {
 	return {}, false
 }
 
-clear :: proc(self: ^Chan($T), destroy_item: Maybe(proc(item: ^T)) = nil) {
-	for queue.len(self.items) > 0 {
-		result := queue.pop_front(&self.items)
+clear :: proc(self: Chan($T), destroy_item: Maybe(proc(item: ^T)) = nil) {
+	inner := get_inner(self)
+	assert(inner != nil, "cannot clear a closed or uninitialized channel")
+
+	for queue.len(inner.items) > 0 {
+		result := queue.pop_front(&inner.items)
 		if fn, ok := destroy_item.(proc(item: ^T)); ok {
 			if result.ok do fn(&result.value)
 		}
 	}
 }
 
-len :: #force_inline proc(self: ^Chan($T)) -> int {
-	return queue.len(self.items)
+len :: #force_inline proc(self: Chan($T)) -> int {
+	inner := get_inner(self)
+	assert(inner != nil, "cannot get length of a closed or uninitialized channel")
+	return queue.len(inner.items)
 }
 
-default_branch :: proc(ch: ^Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
+default_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
 	id: u64 = storage.INVALID
-	chan: ^Chan(T)
+	chan: ^Inner_Chan(T)
 	receivers: ^queue.Queue(Waiter)
 
-	if is_chan_alive(ch) {
+	if inner := get_inner(ch); inner != nil {
 		id = ch.id
-		chan = ch
-		receivers = &ch.receivers
+		chan = inner
+		receivers = &inner.receivers
 	}
 
 	return Case {
@@ -153,7 +180,7 @@ default_branch :: proc(ch: ^Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Cas
 		out_ptr = out,
 		out_ok_ptr = out_ok,
 		pop = proc(raw_ch: rawptr, out: rawptr, out_ok: ^bool) -> bool {
-			ch := (^Chan(T))(raw_ch)
+			ch := (^Inner_Chan(T))(raw_ch)
 			if ch.items.len > 0 {
 				result := queue.pop_front(&ch.items)
 				if out != nil do (^T)(out)^ = result.value
@@ -169,7 +196,7 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 	sched := get_instance()
 
 	for c, i in cases {
-		if !is_chan_alive(sched, c.ch_id) {
+		if !is_chan_alive(c.ch_id) {
 			if c.out_ok_ptr != nil do c.out_ok_ptr^ = false
 			return i
 		}
@@ -256,19 +283,39 @@ remove_waiter :: proc(q: ^queue.Queue(Waiter), handle: Handle) {
 
 @(private)
 is_chan_alive :: proc {
-	is_chan_alive_by_ref,
+	is_chan_alive_by_handle,
 	is_chan_alive_by_id,
 }
 
 @(private)
-is_chan_alive_by_ref :: #force_inline proc(self: ^Chan($T)) -> bool {
-	if self == nil do return false
-	return is_chan_alive_by_id(self.sched, self.id)
+is_chan_alive_by_id :: proc(id: u64) -> bool {
+	sched := get_instance()
+	_, ok := storage.get_ptr(&sched.channels, id)
+	return ok
 }
 
 @(private)
-is_chan_alive_by_id :: #force_inline proc(sched: ^Scheduler, chan_id: u64) -> bool {
-	_, ok := storage.get_ptr(&sched.channels, chan_id)
-	return ok
+is_chan_alive_by_handle :: proc(chan: Chan($T)) -> bool {
+	return is_chan_alive_by_id(chan.id)
 }
+
+@(private)
+get_inner :: proc(chan: Chan($T)) -> ^Inner_Chan(T) {
+	sched := get_instance()
+	ptr, ok := storage.get(&sched.channels, chan.id)
+	if !ok do return nil
+	return (^Inner_Chan(T))(ptr)
+}
+
+// @(private)
+// is_chan_alive_by_ref :: #force_inline proc(self: Chan($T)) -> bool {
+// 	if self == nil do return false
+// 	return is_chan_alive_by_id(self.sched, self.id)
+// }
+
+// @(private)
+// is_chan_alive_by_id :: #force_inline proc(sched: ^Scheduler, chan_id: u64) -> bool {
+// 	_, ok := storage.get_ptr(&sched.channels, chan_id)
+// 	return ok
+// }
 

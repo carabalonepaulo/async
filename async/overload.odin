@@ -2,15 +2,20 @@ package async
 
 init :: proc {
 	scheduler_init,
-	chan_init,
-	signal_init,
-	cancel_token_init,
+// chan_init,
+// signal_init,
+// cancel_token_init,
 }
 
 deinit :: proc {
 	scheduler_deinit,
-	chan_deinit,
-	signal_deinit,
+// chan_deinit,
+// signal_deinit,
+}
+
+destroy :: proc {
+	chan_destroy,
+	signal_destroy,
 }
 
 send :: proc {
