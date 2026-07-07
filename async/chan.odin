@@ -3,12 +3,10 @@ package async
 import "base:builtin"
 import "base:runtime"
 import "core:container/queue"
-import "core:fmt"
 import "core:time"
 
 import "coro"
 import "storage"
-import tw "time_wheel"
 
 @(private)
 Case :: struct {

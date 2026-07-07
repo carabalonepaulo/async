@@ -1,7 +1,5 @@
 package async
 
-import "core:container/queue"
-
 @(private)
 Empty :: struct {}
 

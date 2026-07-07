@@ -3,11 +3,8 @@ package async
 import "base:builtin"
 import "base:runtime"
 import "core:c"
-import "core:container/intrusive/list"
 import "core:container/queue"
-import "core:fmt"
 import "core:mem"
-import "core:slice"
 import "core:time"
 
 import "coro"
