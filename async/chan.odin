@@ -3,6 +3,7 @@ package async
 import "base:builtin"
 import "base:runtime"
 import "core:container/queue"
+import "core:fmt"
 import "core:time"
 
 import "coro"
@@ -223,13 +224,6 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 	if timeout == 0 do return -1
 
 	handle := get_handle()
-
-	timer_id: u64
-	if timeout > 0 {
-		timer_id = storage.add(&sched.sleeping, handle)
-		tw.after(&sched.time_wheel, timeout, tw.Task(timer_id))
-	}
-
 	for c, i in cases {
 		waiter := Waiter {
 			handle   = handle,
@@ -239,6 +233,12 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 		queue.enqueue(c.receivers, waiter)
 	}
 
+	timer_id: u64
+	if timeout > 0 {
+		fn := proc(ud: rawptr) {wake(Handle(transmute(u64)(ud)))}
+		timer_id = timer(timeout, fn, transmute(rawptr)(handle))
+	}
+
 	yield()
 
 	ud := get_user_data()
@@ -246,7 +246,7 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 
 	if coro.get_bytes_stored(ud.co) >= size_of(int) {
 		raw_idx := pop(int)
-		storage.remove(&sched.sleeping, timer_id)
+		storage.remove(&sched.timers, timer_id)
 
 		if raw_idx < 0 {
 			idx = (-raw_idx) - 1

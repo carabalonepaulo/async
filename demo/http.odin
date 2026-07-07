@@ -10,8 +10,9 @@ coroutine :: proc(client: ^http.Client) {
 	out := async.create_chan(http.Result); defer async.destroy(out)
 
 	cancel := async.create_cancel_token()
-	async.cancel_after(cancel, 1 * time.Second)
+	async.cancel_after(cancel, 1 * time.Millisecond)
 
+	fmt.println("[http] request sent")
 	http.fetch(
 		client,
 		http.Request {
@@ -27,11 +28,11 @@ coroutine :: proc(client: ^http.Client) {
 
 	switch idx {
 	case -1:
-		fmt.println("select timeout")
+		fmt.println("[http] select timeout")
 	case 0:
-		fmt.printfln("request completed, is err %v", res.err != .None)
+		fmt.printfln("[http] request completed, is err %v", res.err != .None)
 	case 1:
-		fmt.println("request cancelled (timeout with cancel_after)")
+		fmt.println("[http] request cancelled (timeout with cancel_after)")
 	}
 }
 

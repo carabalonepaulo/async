@@ -28,12 +28,15 @@ Cancel_After_Payload :: struct {
 	duration: time.Duration,
 }
 
-// TODO: time wheel must support procs...
 cancel_after :: proc(self: Cancellation_Token, duration: time.Duration) {
-	spawn(Cancel_After_Payload{self, duration}, proc(payload: Cancel_After_Payload) {
-		sleep(payload.duration)
-		trigger(payload.self)
-	})
+	timer(duration, proc(ud: rawptr) {
+			id := transmute(u64)(ud)
+			chan := Chan(Empty) {
+				id = id,
+			}
+			token := (Cancellation_Token)(chan)
+			trigger(token)
+		}, transmute(rawptr)(self.id))
 }
 
 @(private)

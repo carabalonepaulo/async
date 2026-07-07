@@ -16,6 +16,11 @@ import tw "time_wheel"
 
 INITIAL_CAPACITY :: #config(ASYNC_INITIAL_CAPACITY, 1024)
 
+Timer :: struct {
+	fn: proc(ud: rawptr),
+	ud: rawptr,
+}
+
 User_Data :: struct {
 	ctx:       runtime.Context,
 	co:        ^coro.Coro,
@@ -53,7 +58,7 @@ scheduler_send :: proc(self: Handle, value: $T) {
 Scheduler :: struct {
 	slots:                storage.Storage(^User_Data),
 	ready:                queue.Queue(u64),
-	sleeping:             storage.Storage(Handle),
+	timers:               storage.Storage(Timer),
 	channels:             storage.Storage(rawptr),
 	active_cancel_tokens: map[u64]bool,
 	time_wheel:           tw.Time_Wheel,
@@ -66,7 +71,7 @@ scheduler: Scheduler
 scheduler_init :: proc() {
 	storage.init(&scheduler.slots, INITIAL_CAPACITY)
 	queue.init(&scheduler.ready)
-	storage.init(&scheduler.sleeping, INITIAL_CAPACITY)
+	storage.init(&scheduler.timers, INITIAL_CAPACITY)
 	storage.init(&scheduler.channels, INITIAL_CAPACITY)
 
 	scheduler.active_cancel_tokens = make(map[u64]bool)
@@ -83,7 +88,7 @@ scheduler_deinit :: proc() {
 
 	storage.deinit(&scheduler.slots)
 	queue.destroy(&scheduler.ready)
-	storage.deinit(&scheduler.sleeping)
+	storage.deinit(&scheduler.timers)
 	storage.deinit(&scheduler.channels)
 
 	tw.deinit(&scheduler.time_wheel)
@@ -124,8 +129,8 @@ poll :: proc() {
 	tw.spin(&scheduler.time_wheel, &scheduler.finished)
 	if builtin.len(scheduler.finished) > 0 {
 		for id in scheduler.finished {
-			if waker, ok := storage.remove(&scheduler.sleeping, id); ok {
-				wake(waker)
+			if task, ok := storage.remove(&scheduler.timers, id); ok {
+				task.fn(task.ud)
 			}
 		}
 	}
@@ -177,10 +182,16 @@ spawn_without_data :: proc(
 	return Handle(ud.id)
 }
 
+timer :: proc(n: time.Duration, fn: proc(ud: rawptr), ud: rawptr = nil) -> u64 {
+	id := storage.add(&scheduler.timers, Timer{fn, ud})
+	tw.after(&scheduler.time_wheel, n, tw.Task(id))
+	return id
+}
+
 sleep :: proc(n: time.Duration) {
 	ud := get_user_data()
-	id := storage.add(&scheduler.sleeping, Handle(ud.id))
-	tw.after(&scheduler.time_wheel, n, tw.Task(id))
+	fn := proc(ud: rawptr) {wake(Handle(transmute(u64)(ud)))}
+	timer(n, fn, transmute(rawptr)(ud.id))
 	yield()
 }
 
