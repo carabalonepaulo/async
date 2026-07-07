@@ -21,10 +21,6 @@ signal_destroy :: proc(self: Signal) {
 
 emit :: proc(self: Signal) {
 	ch := (Chan(Empty))(self)
-	inner := get_inner(ch)
-	if inner == nil do return
-
-	count := queue.len(inner.receivers)
-	for _ in 0 ..< count do chan_send(ch, Empty{})
+	for chan_try_send(ch, Empty{}) {}
 }
 

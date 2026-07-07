@@ -82,7 +82,7 @@ chan_destroy :: proc(self: Chan($T)) {
 	free(inner)
 }
 
-chan_send :: proc(self: Chan($T), value: T) {
+chan_try_send :: proc(self: Chan($T), value: T) -> bool {
 	inner := get_inner(self)
 	assert(inner != nil, "cannot send to a closed or uninitialized channel")
 
@@ -93,7 +93,7 @@ chan_send :: proc(self: Chan($T), value: T) {
 
 		if waiter.case_idx == -1 {
 			send(waiter.handle, Result(T){value, true})
-			return
+			return true
 		}
 
 		ud, ok := storage.get(&sched.slots, u64(waiter.handle))
@@ -103,10 +103,28 @@ chan_send :: proc(self: Chan($T), value: T) {
 		ptr := (^T)(waiter.dest_ptr)
 		ptr^ = value
 		send(waiter.handle, waiter.case_idx)
-		return
+		return true
 	}
 
-	queue.enqueue(&inner.items, Result(T){value, true})
+	return false
+}
+
+chan_send :: proc(self: Chan($T), value: T) {
+	if !chan_try_send(self, value) {
+		queue.enqueue(&get_inner(self).items, Result(T){value, true})
+	}
+}
+
+chan_try_recv :: proc(self: Chan($T)) -> (T, bool) {
+	inner := get_inner(self)
+	assert(inner != nil, "cannot recv from a closed or uninitialized channel")
+
+	if inner.items.len > 0 {
+		result := queue.pop_front(&inner.items)
+		return result.value, result.ok
+	}
+
+	return {}, false
 }
 
 chan_recv :: proc(self: Chan($T)) -> (T, bool) {

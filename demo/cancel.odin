@@ -10,7 +10,7 @@ Signal_Arg :: struct {
 }
 
 signal_producer :: proc(ch: async.Chan(int)) {
-	// async.sleep(500 * time.Millisecond)
+	async.sleep(500 * time.Millisecond)
 	async.send(ch, 129)
 	fmt.println("[producer] sent", 129)
 }
@@ -20,7 +20,7 @@ signal_select :: proc(arg: Signal_Arg) {
 	val: int
 
 	idx := async.select(
-		{async.branch(arg.cancel), async.branch(arg.ch, &val)},
+		{async.branch(arg.ch, &val), async.branch(arg.cancel)},
 		timeout = 1 * time.Second,
 	)
 
