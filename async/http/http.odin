@@ -6,6 +6,7 @@ import "core:container/queue"
 import "core:fmt"
 import "core:mem"
 import "core:strings"
+import "core:time"
 import "vendor:curl"
 
 import async ".."
@@ -25,6 +26,7 @@ Error :: enum {
 	Multi_Init_Failed,
 	Perform_Failed,
 	Impersonate_Failed,
+	Timeout,
 }
 
 Method :: enum {
@@ -109,6 +111,35 @@ deinit :: proc(self: ^Client) {
 		curl.multi_cleanup(self.multi)
 	}
 	delete(self.active_requests)
+}
+
+get :: proc(
+	self: ^Client,
+	url: string,
+	timeout: time.Duration = -1,
+) -> (
+	resp: ^Response,
+	err: Error,
+) {
+	out := async.create_chan(Result, 1)
+	defer async.destroy(out)
+
+	cancel := async.create_cancel_token()
+	if timeout > 0 do async.cancel_after(cancel, timeout)
+
+	fetch(self, Request{method = .Get, url = url, out = out, cancel = cancel})
+
+	res: Result
+	idx := async.select({async.branch(out, &res), async.branch(cancel)})
+
+	switch idx {
+	case 0:
+		return res.resp, res.err
+	case 1:
+		return {}, .Timeout
+	case:
+		panic("unreachable")
+	}
 }
 
 fetch :: proc(self: ^Client, req: Request) {
