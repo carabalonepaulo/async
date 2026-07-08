@@ -152,3 +152,50 @@ send :: proc(
 	return res.sent, res.err
 }
 
+send_file :: proc {
+	send_file_without_progress,
+	send_file_with_progress,
+}
+
+send_file_without_progress :: proc(
+	socket: net.TCP_Socket,
+	file: Handle,
+	offset: int = 0,
+	nbytes: int = SEND_ENTIRE_FILE,
+	timeout: time.Duration = NO_TIMEOUT,
+) -> nbio.Send_File_Error {
+	cb := proc(op: ^nbio.Operation) {async.send(load_handle(op), op.sendfile.err)}
+	op := nbio.sendfile(socket, file, cb, offset, nbytes, false, timeout)
+	store_handle(op)
+	return async.recv(nbio.Send_File_Error)
+}
+
+Send_File_Status :: struct {
+	file:    Handle,
+	sent:    int,
+	err:     nbio.Send_File_Error,
+	is_done: bool,
+}
+
+send_file_with_progress :: proc(
+	socket: net.TCP_Socket,
+	file: Handle,
+	offset: int = 0,
+	nbytes: int = SEND_ENTIRE_FILE,
+	progress: async.Chan(Send_File_Status),
+	timeout: time.Duration = NO_TIMEOUT,
+) {
+	cb := proc(op: ^nbio.Operation) {
+		progress := async.chan_from_rawptr(Send_File_Status, op.user_data[0])
+		status := Send_File_Status {
+			file    = op.sendfile.file,
+			sent    = op.sendfile.sent,
+			err     = op.sendfile.err,
+			is_done = op.sendfile.sent == op.sendfile.nbytes || op.sendfile.err != nil,
+		}
+		async.send(progress, status)
+	}
+	op := nbio.sendfile(socket, file, cb, offset, nbytes, true, timeout)
+	op.user_data[0] = async.into_rawptr(progress)
+}
+

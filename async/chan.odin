@@ -335,7 +335,7 @@ chan_into_rawptr :: #force_inline proc(self: Chan($T)) -> rawptr {
 	return transmute(rawptr)(self.id)
 }
 
-channel_from_rawptr :: #force_inline proc($T: typeid, ptr: rawptr) -> Chan(T) {
+chan_from_rawptr :: #force_inline proc($T: typeid, ptr: rawptr) -> Chan(T) {
 	return Chan(T){id = transmute(u64)(ptr)}
 }
 
