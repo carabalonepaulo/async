@@ -34,6 +34,10 @@ cancel_after :: proc(self: Cancellation_Token, duration: time.Duration) {
 		}, transmute(rawptr)(self.id))
 }
 
+wait :: proc(self: Cancellation_Token) {
+	select({branch(self)})
+}
+
 @(private)
 add_cancel_token :: proc(id: u64) {
 	sched := get_scheduler()
