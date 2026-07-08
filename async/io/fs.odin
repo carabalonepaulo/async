@@ -6,7 +6,6 @@ import "core:nbio"
 import "core:time"
 
 CWD :: nbio.CWD
-NO_TIMEOUT :: nbio.NO_TIMEOUT
 
 Permissions_All :: nbio.Permissions_All
 Permissions_Default_Directory :: nbio.Permissions_Default_Directory
@@ -124,12 +123,5 @@ stat :: proc(handle: Handle) -> (File_Type, i64, FS_Error) {
 	store_handle(op)
 	res := async.recv(Stat_Result)
 	return res.type, res.size, res.err
-}
-
-close :: proc(handle: Handle) {
-	cb := proc(op: ^nbio.Operation) {async.wake(load_handle(op))}
-	op := nbio.close(handle, cb)
-	store_handle(op)
-	async.yield()
 }
 

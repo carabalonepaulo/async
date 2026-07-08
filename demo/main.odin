@@ -10,13 +10,14 @@ main :: proc() {
 	io.init()
 	defer io.deinit()
 
-	fs_demo()
-	signal_demo()
-	select_demo()
-	ch_producer_consumer_demo()
-	arg_demo()
-	producer_consumer_demo()
-	http_demo()
-	sleep_demo()
+	sock_demo()
+	// fs_demo()
+	// signal_demo()
+	// select_demo()
+	// ch_producer_consumer_demo()
+	// arg_demo()
+	// producer_consumer_demo()
+	// http_demo()
+	// sleep_demo()
 }
 
