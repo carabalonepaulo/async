@@ -18,7 +18,7 @@ Timer :: struct {
 	ud: rawptr,
 }
 
-User_Data :: struct {
+Internal_State :: struct {
 	ctx:       runtime.Context,
 	co:        ^coro.Coro,
 	fn:        rawptr,
@@ -53,7 +53,7 @@ scheduler_send :: proc(self: Handle, value: $T) {
 }
 
 Scheduler :: struct {
-	slots:                storage.Storage(^User_Data),
+	slots:                storage.Storage(^Internal_State),
 	ready:                queue.Queue(u64),
 	timers:               storage.Storage(Timer),
 	channels:             storage.Storage(rawptr),
@@ -153,7 +153,7 @@ spawn_with_data :: proc(
 
 	ud := create_ud(rawptr(fn), stack_allocator)
 	raw_fn := proc "c" (co: ^coro.Coro) {
-		ud := (^User_Data)(coro.get_user_data(co))
+		ud := (^Internal_State)(coro.get_user_data(co))
 		context = ud.ctx
 		((proc(arg: T))(ud.fn))(pop(T))
 	}
@@ -175,7 +175,7 @@ spawn_without_data :: proc(
 ) -> Handle {
 	ud := create_ud(rawptr(fn), stack_allocator)
 	raw_fn := proc "c" (co: ^coro.Coro) {
-		ud := (^User_Data)(coro.get_user_data(co))
+		ud := (^Internal_State)(coro.get_user_data(co))
 		context = ud.ctx
 		((proc())(ud.fn))()
 	}
@@ -194,7 +194,7 @@ timer :: proc(n: time.Duration, fn: proc(ud: rawptr), ud: rawptr = nil) -> u64 {
 }
 
 sleep :: proc(n: time.Duration) {
-	ud := get_user_data()
+	ud := get_internal_state()
 	fn := proc(ud: rawptr) {wake(Handle(transmute(u64)(ud)))}
 	timer(n, fn, transmute(rawptr)(ud.id))
 	yield()
@@ -215,8 +215,8 @@ scheduler_recv :: #force_inline proc($T: typeid) -> T {
 }
 
 @(private)
-get_user_data :: #force_inline proc() -> ^User_Data {
-	return (^User_Data)(coro.get_user_data(coro.running()))
+get_internal_state :: #force_inline proc() -> ^Internal_State {
+	return (^Internal_State)(coro.get_user_data(coro.running()))
 }
 
 get_scheduler :: #force_inline proc() -> ^Scheduler {
@@ -224,7 +224,7 @@ get_scheduler :: #force_inline proc() -> ^Scheduler {
 }
 
 get_handle :: #force_inline proc() -> Handle {
-	ud := get_user_data()
+	ud := get_internal_state()
 	return Handle(ud.id)
 }
 
@@ -240,7 +240,7 @@ push :: proc(co: ^coro.Coro, value: $T) {
 
 @(private)
 pop :: proc($T: typeid) -> T {
-	ud := get_user_data()
+	ud := get_internal_state()
 	if coro.get_bytes_stored(ud.co) < size_of(T) do panic("send/recv mismatch")
 	value: T
 	coro.check(coro.pop(ud.co, &value, size_of(T)))
@@ -248,10 +248,10 @@ pop :: proc($T: typeid) -> T {
 }
 
 @(private)
-create_ud :: proc(fn: rawptr, allocator: mem.Allocator) -> ^User_Data {
+create_ud :: proc(fn: rawptr, allocator: mem.Allocator) -> ^Internal_State {
 	entry := storage.entry(&scheduler.slots)
 
-	ud := new(User_Data)
+	ud := new(Internal_State)
 	ud.ctx = context
 	ud.co = new(coro.Coro)
 	ud.fn = fn
@@ -266,7 +266,7 @@ create_ud :: proc(fn: rawptr, allocator: mem.Allocator) -> ^User_Data {
 @(private)
 create_desc :: proc(
 	raw_fn: proc "c" (co: ^coro.Coro),
-	ud: ^User_Data,
+	ud: ^Internal_State,
 	stack_size: uint,
 	storage_size: uint,
 ) -> (
@@ -277,13 +277,13 @@ create_desc :: proc(
 	desc.storage_size = storage_size
 	desc.allocator_data = ud
 	desc.alloc_cb = proc "c" (size: c.size_t, allocator_data: rawptr) -> rawptr {
-		ud := (^User_Data)(allocator_data)
+		ud := (^Internal_State)(allocator_data)
 		context = ud.ctx
 		ptr, _ := mem.alloc(int(size), allocator = ud.allocator)
 		return ptr
 	}
 	desc.dealloc_cb = proc "c" (ptr: rawptr, size: c.size_t, allocator_data: rawptr) {
-		ud := (^User_Data)(allocator_data)
+		ud := (^Internal_State)(allocator_data)
 		context = ud.ctx
 		mem.free_with_size(ptr, int(size), allocator = ud.allocator)
 	}

@@ -239,7 +239,7 @@ select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 
 	yield()
 
-	ud := get_user_data()
+	ud := get_internal_state()
 	idx: int
 
 	if coro.get_bytes_stored(ud.co) >= size_of(int) {
