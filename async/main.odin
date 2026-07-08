@@ -12,6 +12,7 @@ import "storage"
 import tw "time_wheel"
 
 INITIAL_CAPACITY :: #config(ASYNC_INITIAL_CAPACITY, 1024)
+MAX_USER_DATA :: #config(ASYNC_MAX_USER_DATA, 5)
 
 Next_Tick :: struct {
 	ud: rawptr,
@@ -30,7 +31,7 @@ Internal_State :: struct {
 	id:        u64,
 	queued:    bool,
 	allocator: mem.Allocator,
-	ud:        rawptr,
+	ud:        [MAX_USER_DATA]rawptr,
 }
 
 Handle :: distinct u64
@@ -243,12 +244,22 @@ get_internal_state :: #force_inline proc() -> ^Internal_State {
 	return (^Internal_State)(coro.get_user_data(coro.running()))
 }
 
-get_user_data :: proc() -> rawptr {
-	return get_internal_state().ud
+get_user_data_from_current :: proc(idx: int) -> rawptr {
+	return get_internal_state().ud[idx]
 }
 
-set_user_data :: proc(ud: rawptr) {
-	get_internal_state().ud = ud
+get_user_data_from_handle :: proc(handle: Handle, idx: int) -> rawptr {
+	state, ok := storage.get(&scheduler.slots, u64(handle))
+	return ok ? state.ud[idx] : nil
+}
+
+set_user_data_to_current :: proc(idx: int, ud: rawptr) {
+	get_internal_state().ud[idx] = ud
+}
+
+set_user_data_to_handle :: proc(handle: Handle, idx: int, ud: rawptr) {
+	state, ok := storage.get(&scheduler.slots, u64(handle))
+	if ok do state.ud[idx] = ud
 }
 
 get_scheduler :: #force_inline proc() -> ^Scheduler {
@@ -320,5 +331,13 @@ create_desc :: proc(
 		mem.free_with_size(ptr, int(size), allocator = ud.allocator)
 	}
 	return
+}
+
+handle_into_rawptr :: #force_inline proc(handle: Handle) -> rawptr {
+	return transmute(rawptr)(handle)
+}
+
+handle_from_rawptr :: #force_inline proc(ptr: rawptr) -> Handle {
+	return transmute(Handle)(ptr)
 }
 

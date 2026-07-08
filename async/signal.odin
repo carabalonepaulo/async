@@ -22,3 +22,11 @@ emit :: proc(self: Signal) {
 	for chan_try_send(ch, Empty{}) {}
 }
 
+signal_into_rawptr :: #force_inline proc(self: Signal) -> rawptr {
+	return transmute(rawptr)(self.id)
+}
+
+signal_from_rawptr :: #force_inline proc(ptr: rawptr) -> Signal {
+	return (Signal)(Chan(Empty){id = transmute(u64)(ptr)})
+}
+

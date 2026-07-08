@@ -60,3 +60,11 @@ destroy_cancel_tokens :: proc() {
 	delete(sched.active_cancel_tokens)
 }
 
+cancel_token_into_rawptr :: #force_inline proc(self: Cancellation_Token) -> rawptr {
+	return transmute(rawptr)(self.id)
+}
+
+cancel_token_from_rawptr :: #force_inline proc(ptr: rawptr) -> Cancellation_Token {
+	return (Cancellation_Token)(Chan(Empty){id = transmute(u64)(ptr)})
+}
+

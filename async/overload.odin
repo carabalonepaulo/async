@@ -48,3 +48,20 @@ run :: proc {
 	scheduler_run_with_poly,
 }
 
+get_user_data :: proc {
+	get_user_data_from_current,
+	get_user_data_from_handle,
+}
+
+set_user_data :: proc {
+	set_user_data_to_current,
+	set_user_data_to_handle,
+}
+
+into_rawptr :: proc {
+	handle_into_rawptr,
+	chan_into_rawptr,
+	cancel_token_into_rawptr,
+	signal_into_rawptr,
+}
+
