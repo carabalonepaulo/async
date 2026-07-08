@@ -44,6 +44,7 @@ branch :: proc {
 
 run :: proc {
 	scheduler_run,
+	scheduler_run_with,
 	scheduler_run_with_poly,
 }
 

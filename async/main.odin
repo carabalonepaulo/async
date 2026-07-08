@@ -99,6 +99,14 @@ scheduler_run :: proc(sleep: time.Duration = 0) {
 	}
 }
 
+scheduler_run_with :: proc(tick: proc(), sleep: time.Duration = 0) {
+	for get_pending() > 0 {
+		tick()
+		poll()
+		if sleep > 0 do time.sleep(sleep)
+	}
+}
+
 scheduler_run_with_poly :: proc(arg: $T, tick: proc(arg: T), sleep: time.Duration = 0) {
 	for get_pending() > 0 {
 		tick(arg)
