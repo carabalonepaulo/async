@@ -23,7 +23,7 @@ sock_server :: proc() {
 	fmt.println("[server] closed")
 }
 
-sock_client:: proc() {
+sock_client :: proc() {
 	endpoint, ok := net.parse_endpoint("127.0.0.1:5059")
 	assert(ok)
 
@@ -51,3 +51,4 @@ sock_demo :: proc() {
 	async.spawn(sock_client)
 	async.run(io.poll)
 }
+
