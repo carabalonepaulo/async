@@ -13,6 +13,11 @@ import tw "time_wheel"
 
 INITIAL_CAPACITY :: #config(ASYNC_INITIAL_CAPACITY, 1024)
 
+Next_Tick :: struct {
+	ud: rawptr,
+	fn: proc(ud: rawptr),
+}
+
 Timer :: struct {
 	fn: proc(ud: rawptr),
 	ud: rawptr,
@@ -54,6 +59,7 @@ scheduler_send :: proc(self: Handle, value: $T) {
 }
 
 Scheduler :: struct {
+	next_tick:            queue.Queue(Next_Tick),
 	slots:                storage.Storage(^Internal_State),
 	ready:                queue.Queue(u64),
 	timers:               storage.Storage(Timer),
@@ -67,6 +73,7 @@ Scheduler :: struct {
 scheduler: Scheduler
 
 scheduler_init :: proc() {
+	queue.init(&scheduler.next_tick)
 	storage.init(&scheduler.slots, INITIAL_CAPACITY)
 	queue.init(&scheduler.ready)
 	storage.init(&scheduler.timers, INITIAL_CAPACITY)
@@ -80,6 +87,12 @@ scheduler_init :: proc() {
 
 scheduler_deinit :: proc() {
 	destroy_cancel_tokens()
+
+	for queue.len(scheduler.next_tick) > 0 {
+		meta := queue.dequeue(&scheduler.next_tick)
+		meta.fn(meta.ud)
+	}
+	queue.destroy(&scheduler.next_tick)
 
 	assert(storage.count(&scheduler.slots) == 0, "scheduler has pending tasks")
 	assert(storage.count(&scheduler.channels) == 0, "scheduler has active channels")
@@ -117,6 +130,12 @@ scheduler_run_with_poly :: proc(arg: $T, tick: proc(arg: T), sleep: time.Duratio
 }
 
 poll :: proc() {
+	len := queue.len(scheduler.next_tick)
+	for _ in 0 ..< len {
+		meta := queue.dequeue(&scheduler.next_tick)
+		meta.fn(meta.ud)
+	}
+
 	for queue.len(scheduler.ready) > 0 {
 		task_id := queue.pop_front(&scheduler.ready)
 		ud, ok := storage.get(&scheduler.slots, task_id)
@@ -186,6 +205,10 @@ spawn_without_data :: proc(
 	queue.enqueue(&scheduler.ready, ud.id)
 
 	return Handle(ud.id)
+}
+
+next_tick :: proc(fn: proc(ud: rawptr), ud: rawptr = nil) {
+	queue.enqueue(&scheduler.next_tick, Next_Tick{ud, fn})
 }
 
 timer :: proc(n: time.Duration, fn: proc(ud: rawptr), ud: rawptr = nil) -> u64 {
