@@ -1,7 +1,6 @@
-package async_fs
+package async_io
 
-import "../.."
-import internal "../internal"
+import ".."
 
 import "core:nbio"
 import "core:time"
@@ -39,10 +38,10 @@ open :: proc(
 	FS_Error,
 ) {
 	cb := proc(op: ^nbio.Operation) {
-		async.send(internal.load_handle(op), Open_Result{op.open.handle, op.open.err})
+		async.send(load_handle(op), Open_Result{op.open.handle, op.open.err})
 	}
 	op := nbio.open(path, cb, mode, perm, dir)
-	internal.store_handle(op)
+	store_handle(op)
 	res := async.recv(Open_Result)
 	return res.handle, res.err
 }
@@ -54,9 +53,9 @@ read :: proc(
 	all := false,
 	timeout: time.Duration = NO_TIMEOUT,
 ) -> FS_Error {
-	cb := proc(op: ^nbio.Operation) {async.send(internal.load_handle(op), op.read.err)}
+	cb := proc(op: ^nbio.Operation) {async.send(load_handle(op), op.read.err)}
 	op := nbio.read(handle, offset, buf, cb, all, timeout)
-	internal.store_handle(op)
+	store_handle(op)
 	return async.recv(FS_Error)
 }
 
@@ -102,10 +101,10 @@ write :: proc(
 	FS_Error,
 ) {
 	cb := proc(op: ^nbio.Operation) {
-		async.send(internal.load_handle(op), Write_Result{op.write.written, op.write.err})
+		async.send(load_handle(op), Write_Result{op.write.written, op.write.err})
 	}
 	op := nbio.write(handle, offset, buf, cb, all, timeout)
-	internal.store_handle(op)
+	store_handle(op)
 	res := async.recv(Write_Result)
 	return res.written, res.err
 }
@@ -119,18 +118,18 @@ Stat_Result :: struct {
 
 stat :: proc(handle: Handle) -> (File_Type, i64, FS_Error) {
 	cb := proc(op: ^nbio.Operation) {
-		async.send(internal.load_handle(op), Stat_Result{op.stat.type, op.stat.size, op.stat.err})
+		async.send(load_handle(op), Stat_Result{op.stat.type, op.stat.size, op.stat.err})
 	}
 	op := nbio.stat(handle, cb)
-	internal.store_handle(op)
+	store_handle(op)
 	res := async.recv(Stat_Result)
 	return res.type, res.size, res.err
 }
 
 close :: proc(handle: Handle) {
-	cb := proc(op: ^nbio.Operation) {async.wake(internal.load_handle(op))}
+	cb := proc(op: ^nbio.Operation) {async.wake(load_handle(op))}
 	op := nbio.close(handle, cb)
-	internal.store_handle(op)
+	store_handle(op)
 	async.yield()
 }
 

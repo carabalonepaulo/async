@@ -2,7 +2,6 @@ package main
 
 import "../async"
 import "../async/io"
-import "../async/io/fs"
 import "core:fmt"
 
 import "core:os"
@@ -15,19 +14,19 @@ actions :: proc() {
 }
 
 write_file :: proc() {
-	file, open_err := fs.open(FILE_NAME, {.Create, .Write, .Append})
+	file, open_err := io.open(FILE_NAME, {.Create, .Write, .Append})
 	assert(open_err == .None)
 
 	text := "hello world!"
-	n, write_err := fs.write(file, 0, transmute([]u8)(text))
+	n, write_err := io.write(file, 0, transmute([]u8)(text))
 	assert(write_err == .None)
 	fmt.printfln("[write_file] %v/%v", n, len(text))
 
-	fs.close(file)
+	io.close(file)
 }
 
 read_file :: proc() {
-	text, err := fs.read_entire_file(FILE_NAME)
+	text, err := io.read_entire_file(FILE_NAME)
 	assert(err.value == .None)
 	defer delete(text)
 
