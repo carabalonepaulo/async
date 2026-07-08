@@ -25,6 +25,7 @@ Internal_State :: struct {
 	id:        u64,
 	queued:    bool,
 	allocator: mem.Allocator,
+	ud:        rawptr,
 }
 
 Handle :: distinct u64
@@ -217,6 +218,14 @@ scheduler_recv :: #force_inline proc($T: typeid) -> T {
 @(private)
 get_internal_state :: #force_inline proc() -> ^Internal_State {
 	return (^Internal_State)(coro.get_user_data(coro.running()))
+}
+
+get_user_data :: proc() -> rawptr {
+	return get_internal_state().ud
+}
+
+set_user_data :: proc(ud: rawptr) {
+	get_internal_state().ud = ud
 }
 
 get_scheduler :: #force_inline proc() -> ^Scheduler {
