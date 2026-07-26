@@ -1,5 +1,6 @@
 package main
 
+import "core:fmt"
 import "core:strings"
 import "core:sys/windows"
 
@@ -37,7 +38,14 @@ http_server_demo :: proc() {
 }
 
 on_request :: proc(state: ^State, req: ^http.Request, res: ^http.Response) {
-	res.headers["Content-Type"] = "text/plain"
-	res.body = transmute([]u8)(strings.clone("hello world!", context.temp_allocator))
+	fmt.printfln("[request] %v - %v", req.method, req.uri)
+	if strings.has_prefix(req.uri, "/public/") {
+		path := strings.trim_prefix(req.uri, "/public/")
+		fmt.printfln("[request] %v", path)
+		res.body = http.File_Path(path)
+	} else {
+		res.headers["Content-Type"] = "text/plain; charset=utf-8"
+		res.body = transmute([]u8)(strings.clone("hello world!", context.temp_allocator))
+	}
 }
 

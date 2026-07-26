@@ -29,6 +29,7 @@ Server :: struct {
 	sock:            net.TCP_Socket,
 	clients:         storage.Storage(Client),
 	request_handler: proc(state: rawptr, req: ^Request, res: ^Response),
+	mime_types:      map[string]string,
 	open:            bool,
 }
 
@@ -45,6 +46,10 @@ init :: proc(
 	self.state = state
 	self.open = true
 	self.request_handler = request_handler
+
+	self.mime_types = make(map[string]string)
+	init_mime_types(&self.mime_types)
+
 	storage.init(&self.clients)
 	async.spawn(self, begin_accept, stack_size = 64)
 	return nil
@@ -60,6 +65,8 @@ deinit :: proc(self: ^Server) {
 	})
 	storage.deinit(&self.clients)
 	net.close(self.sock)
+
+	deinit_mime_types(&self.mime_types)
 }
 
 begin_accept :: proc(self: ^Server) {
@@ -110,7 +117,7 @@ begin_receive :: proc(state: Receive_State) {
 			completed, failed := parser_parse(&parser)
 			if failed {
 				res.status = .Bad_Request
-				response_send(client, &res)
+				response_send(state.server, client, &res)
 				break outer
 			}
 
@@ -119,7 +126,7 @@ begin_receive :: proc(state: Receive_State) {
 			response_reset(&res)
 			state.server.request_handler(nil, &parser.req, &res)
 
-			if !response_send(client, &res) do break outer
+			if !response_send(state.server, client, &res) do break outer
 
 			parser_reset(&parser)
 			mem.free_all(context.temp_allocator)
