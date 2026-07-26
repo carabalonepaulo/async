@@ -6,7 +6,6 @@ import "core:strings"
 Parse_State :: enum {
 	Request_Line,
 	Headers,
-	Body,
 	Complete,
 }
 
@@ -85,13 +84,19 @@ parser_parse :: proc(self: ^Parser) -> (completed: bool, err: bool) {
 
 			line := transmute(string)(line_buf)
 			if line == "" {
-				if self.req.content_length > 0 {
-					self.state = .Body
+				self.req.remaining_bytes = self.req.content_length
+
+				unparsed_len := self.write_cursor - self.read_cursor
+				if unparsed_len > 0 && self.req.content_length > 0 {
+					body_bytes_in_buf := min(unparsed_len, self.req.content_length)
+					self.req.body = self.buf[self.read_cursor:self.read_cursor + body_bytes_in_buf]
+					self.read_cursor += body_bytes_in_buf
 				} else {
-					self.state = .Complete
-					return true, false
+					self.req.body = nil
 				}
-				break
+
+				self.state = .Complete
+				return true, false
 			}
 
 			if idx := strings.index(line, ":"); idx != -1 {
@@ -106,19 +111,6 @@ parser_parse :: proc(self: ^Parser) -> (completed: bool, err: bool) {
 					self.req.content_length = val_int
 				}
 			}
-		case .Body:
-			available_bytes := self.write_cursor - self.read_cursor
-			if available_bytes < self.req.content_length {
-				return false, false
-			}
-
-			body_start := self.read_cursor
-			body_end := self.read_cursor + self.req.content_length
-			self.req.body = self.buf[body_start:body_end]
-
-			self.read_cursor = body_end
-			self.state = .Complete
-			return true, false
 		case .Complete:
 			return true, false
 		}

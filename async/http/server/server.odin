@@ -1,5 +1,6 @@
 package async_http_server
 
+import "core:bytes"
 import "core:fmt"
 import "core:mem"
 import "core:nbio"
@@ -12,12 +13,15 @@ import "../../storage"
 BUFFER_SIZE :: 4096
 
 Request :: struct {
-	method:         string,
-	uri:            string,
-	version:        string,
-	headers:        map[string]string,
-	body:           []u8,
-	content_length: int,
+	method:          string,
+	uri:             string,
+	version:         string,
+	headers:         map[string]string,
+	body:            []u8,
+	content_length:  int,
+	//
+	socket:          net.TCP_Socket,
+	remaining_bytes: int,
 }
 
 Client :: struct {
@@ -69,6 +73,7 @@ deinit :: proc(self: ^Server) {
 	deinit_mime_types(&self.mime_types)
 }
 
+@(private = "file")
 begin_accept :: proc(self: ^Server) {
 	for {
 		sock, endpoint, err := io.accept(self.sock)
@@ -80,11 +85,13 @@ begin_accept :: proc(self: ^Server) {
 	}
 }
 
+@(private = "file")
 Receive_State :: struct {
 	server:    ^Server,
 	client_id: u64,
 }
 
+@(private = "file")
 begin_receive :: proc(state: Receive_State) {
 	parser: Parser
 	parser_init(&parser)
@@ -134,5 +141,26 @@ begin_receive :: proc(state: Receive_State) {
 	}
 
 	storage.remove(&state.server.clients, state.client_id)
+}
+
+read :: proc(req: ^Request, dest_buf: []u8) -> (n: int, err: net.Recv_Error) {
+	if req.remaining_bytes <= 0 do return 0, nil
+
+	max_to_read := min(len(dest_buf), req.remaining_bytes)
+
+	if len(req.body) > 0 {
+		to_copy := min(max_to_read, len(req.body))
+		copy(dest_buf[:to_copy], req.body[:to_copy])
+
+		req.body = req.body[to_copy:]
+		req.remaining_bytes -= to_copy
+		return to_copy, nil
+	}
+
+	n = io.recv(req.socket, {dest_buf[:max_to_read]}) or_return
+	if n == 0 do return 0, nil
+
+	req.remaining_bytes -= n
+	return n, nil
 }
 

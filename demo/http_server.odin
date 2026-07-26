@@ -39,13 +39,23 @@ http_server_demo :: proc() {
 
 on_request :: proc(state: ^State, req: ^http.Request, res: ^http.Response) {
 	fmt.printfln("[request] %v - %v", req.method, req.uri)
-	if strings.has_prefix(req.uri, "/public/") {
-		path := strings.trim_prefix(req.uri, "/public/")
-		fmt.printfln("[request] %v", path)
-		res.body = http.File_Path(path)
-	} else {
-		res.headers["Content-Type"] = "text/plain; charset=utf-8"
-		res.body = transmute([]u8)(strings.clone("hello world!", context.temp_allocator))
+
+	sb: strings.Builder
+	strings.builder_init(&sb)
+	defer strings.builder_destroy(&sb)
+
+	buf: [32]u8
+
+	for {
+		n, _ := http.read(req, buf[:])
+		if n == 0 do break
+		fmt.printfln("[chunk:%v] %v", len(buf), buf)
+
+		strings.write_bytes(&sb, buf[:n])
 	}
+	fmt.printfln("[received] %v", strings.to_string(sb))
+
+	res.headers["Content-Type"] = "text/plain; charset=utf-8"
+	res.body = transmute([]u8)(strings.clone(strings.to_string(sb), context.temp_allocator))
 }
 
