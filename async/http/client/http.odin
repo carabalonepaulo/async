@@ -1,4 +1,4 @@
-package http
+package async_http_client
 
 import "base:runtime"
 import "core:c"
@@ -9,7 +9,7 @@ import "core:strings"
 import "core:time"
 import "vendor:curl"
 
-import async ".."
+import async "../.."
 
 CA_PEM :: #load("cacert.pem")
 
@@ -111,6 +111,7 @@ deinit :: proc(self: ^Client) {
 		curl.multi_cleanup(self.multi)
 	}
 	delete(self.active_requests)
+	queue.destroy(&self.cleanup)
 }
 
 get :: proc(

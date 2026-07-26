@@ -1,7 +1,7 @@
 package main
 
 import "../async"
-import "../async/http"
+import http "../async/http/client"
 
 import "core:fmt"
 import "core:time"
