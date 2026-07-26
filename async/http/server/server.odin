@@ -117,7 +117,7 @@ begin_receive :: proc(state: Receive_State) {
 			completed, failed := parser_parse(&parser)
 			if failed {
 				res.status = .Bad_Request
-				response_send(state.server, client, &res)
+				response_send(state.server, client, &parser.req, &res)
 				break outer
 			}
 
@@ -126,7 +126,7 @@ begin_receive :: proc(state: Receive_State) {
 			response_reset(&res)
 			state.server.request_handler(nil, &parser.req, &res)
 
-			if !response_send(state.server, client, &res) do break outer
+			if !response_send(state.server, client, &parser.req, &res) do break outer
 
 			parser_reset(&parser)
 			mem.free_all(context.temp_allocator)
