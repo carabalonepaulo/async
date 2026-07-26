@@ -124,7 +124,7 @@ begin_receive :: proc(state: Receive_State) {
 			if !completed do break
 
 			response_reset(&res)
-			state.server.request_handler(nil, &parser.req, &res)
+			state.server.request_handler(state.server.state, &parser.req, &res)
 
 			if !response_send(state.server, client, &parser.req, &res) do break outer
 

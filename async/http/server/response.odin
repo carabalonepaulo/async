@@ -1,6 +1,5 @@
 package async_http_server
 
-import "core:crypto/legacy/keccak"
 import "core:fmt"
 import "core:net"
 import "core:strconv"
