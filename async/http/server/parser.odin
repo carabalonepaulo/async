@@ -3,12 +3,14 @@ package async_http_server
 import "core:strconv"
 import "core:strings"
 
+@(private)
 Parse_State :: enum {
 	Request_Line,
 	Headers,
 	Complete,
 }
 
+@(private)
 Parser :: struct {
 	state:        Parse_State,
 	buf:          []u8,
@@ -17,17 +19,20 @@ Parser :: struct {
 	req:          Request,
 }
 
+@(private)
 parser_init :: proc(self: ^Parser) {
 	self.buf = make([]u8, BUFFER_SIZE)
 	self.req.headers = make(map[string]string)
 	self.state = .Request_Line
 }
 
+@(private)
 parser_deinit :: proc(self: ^Parser) {
 	delete(self.buf)
 	delete(self.req.headers)
 }
 
+@(private)
 parser_reset :: proc(self: ^Parser) {
 	self.state = .Request_Line
 	clear(&self.req.headers)
@@ -40,6 +45,7 @@ parser_reset :: proc(self: ^Parser) {
 	parser_compact(self)
 }
 
+@(private)
 parser_get_write_slice :: proc(self: ^Parser) -> []u8 {
 	if self.write_cursor == len(self.buf) && self.read_cursor > 0 {
 		parser_compact(self)
@@ -47,10 +53,12 @@ parser_get_write_slice :: proc(self: ^Parser) -> []u8 {
 	return self.buf[self.write_cursor:]
 }
 
+@(private)
 parser_commit_write :: proc(self: ^Parser, n: int) {
 	self.write_cursor += n
 }
 
+@(private)
 parser_compact :: proc(self: ^Parser) {
 	unparsed_len := self.write_cursor - self.read_cursor
 	if unparsed_len > 0 {
@@ -62,6 +70,7 @@ parser_compact :: proc(self: ^Parser) {
 	self.read_cursor = 0
 }
 
+@(private)
 parser_parse :: proc(self: ^Parser) -> (completed: bool, err: bool) {
 	for {
 		#partial switch self.state {

@@ -3,6 +3,7 @@ package async_http_server
 import "core:path/filepath"
 import "core:strings"
 
+@(private)
 init_mime_types :: proc(mime_types: ^map[string]string) {
 	mime_types[".html"] = "text/html; charset=utf-8"
 	mime_types[".htm"] = "text/html; charset=utf-8"
@@ -49,11 +50,13 @@ init_mime_types :: proc(mime_types: ^map[string]string) {
 	mime_types[".wgsl"] = "text/wgsl"
 }
 
+@(private)
 deinit_mime_types :: proc(mime_types: ^map[string]string) {
 	delete(mime_types^)
 }
 
-get_mime_type :: proc(mime_types: ^map[string]string, file_path: string) -> string {
+@(private)
+get_mime_type_from_path :: proc(mime_types: ^map[string]string, file_path: string) -> string {
 	ext := filepath.ext(file_path)
 	ext_lower := strings.to_lower(ext, context.temp_allocator)
 
