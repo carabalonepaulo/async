@@ -106,6 +106,8 @@ response_send :: proc(
 		try_send_builder(client, &sb) or_return
 		if body_len > 0 do try_send_all(client.sock, body) or_return
 	case File_Path:
+		context.allocator = context.temp_allocator
+
 		path := (string)(body)
 		file, open_err := io.open(path, {.Read})
 		if open_err != nil {

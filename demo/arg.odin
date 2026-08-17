@@ -19,4 +19,3 @@ arg_demo :: proc() {
 	async.spawn(person, arg_coro)
 	async.run(1 * time.Millisecond)
 }
-

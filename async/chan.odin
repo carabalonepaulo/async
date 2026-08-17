@@ -83,7 +83,7 @@ chan_destroy :: proc(self: Chan($T)) {
 
 chan_try_send :: proc(self: Chan($T), value: T) -> bool {
 	inner := get_inner(self)
-	assert(inner != nil, "cannot send to a closed or uninitialized channel")
+	if inner == nil do return false
 
 	sched := get_scheduler()
 
@@ -116,7 +116,7 @@ chan_send :: proc(self: Chan($T), value: T) {
 
 chan_try_recv :: proc(self: Chan($T)) -> (T, bool) {
 	inner := get_inner(self)
-	assert(inner != nil, "cannot recv from a closed or uninitialized channel")
+	if inner == nil do return {}, false
 
 	if inner.items.len > 0 {
 		result := queue.pop_front(&inner.items)
@@ -128,7 +128,7 @@ chan_try_recv :: proc(self: Chan($T)) -> (T, bool) {
 
 chan_recv :: proc(self: Chan($T)) -> (T, bool) {
 	inner := get_inner(self)
-	assert(inner != nil, "cannot recv from a closed or uninitialized channel")
+	if inner == nil do return {}, false
 
 	if inner.items.len > 0 {
 		result := queue.pop_front(&inner.items)
@@ -146,24 +146,9 @@ chan_recv :: proc(self: Chan($T)) -> (T, bool) {
 	return result.value, result.ok
 }
 
-drain :: proc(self: Chan($T)) -> (T, bool) {
-	inner := get_inner(self)
-	assert(inner != nil, "cannot drain a closed or uninitialized channel")
-	assert(
-		queue.len(inner.receivers) == 0,
-		"channel has active coroutines waiting to receive data",
-	)
-
-	if queue.len(inner.items) > 0 {
-		result := queue.pop_front(&inner.items)
-		return result.value, result.ok
-	}
-	return {}, false
-}
-
 clear :: proc(self: Chan($T), destroy_item: Maybe(proc(item: ^T)) = nil) {
 	inner := get_inner(self)
-	assert(inner != nil, "cannot clear a closed or uninitialized channel")
+	if inner == nil do return
 
 	for queue.len(inner.items) > 0 {
 		result := queue.pop_front(&inner.items)
@@ -175,8 +160,7 @@ clear :: proc(self: Chan($T), destroy_item: Maybe(proc(item: ^T)) = nil) {
 
 len :: #force_inline proc(self: Chan($T)) -> int {
 	inner := get_inner(self)
-	assert(inner != nil, "cannot get length of a closed or uninitialized channel")
-	return queue.len(inner.items)
+	return inner == nil ? 0 : queue.len(inner.items)
 }
 
 default_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {

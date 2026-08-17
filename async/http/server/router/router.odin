@@ -82,6 +82,17 @@ dispatch :: proc(ud: rawptr, req: ^server.Request, res: ^server.Response) {
 	if len(ctx.handlers) > 0 do ctx.handlers[0](&ctx)
 }
 
+post :: proc(router: ^Router, path: string, handler: Handler, mws: ..Handler) {
+	route := Route {
+		method = "POST",
+		path   = path,
+	}
+
+	for mw in mws do append(&route.handlers, mw)
+	append(&route.handlers, handler)
+	append(&router.routes, route)
+}
+
 get :: proc(router: ^Router, path: string, handler: Handler, mws: ..Handler) {
 	route := Route {
 		method = "GET",
