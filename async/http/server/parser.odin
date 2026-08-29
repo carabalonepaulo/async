@@ -1,143 +1,144 @@
 package async_http_server
 
+import cb "../../circular_buffer"
+import "core:fmt"
+import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
+import "core:testing"
 
-@(private)
-Parse_State :: enum {
+MAX_LINE_SIZE :: 1024
+
+State :: enum {
 	Request_Line,
 	Headers,
-	Complete,
+	Body,
 }
 
-@(private)
 Parser :: struct {
-	state:        Parse_State,
-	buf:          []u8,
-	read_cursor:  int,
-	write_cursor: int,
-	req:          Request,
+	state:    State,
+	buf:      cb.Circular_Buffer,
+	line_buf: []u8,
+	body_buf: []u8,
+	req:      Request,
 }
 
-@(private)
-parser_init :: proc(self: ^Parser) {
-	self.buf = make([]u8, BUFFER_SIZE)
-	self.req.headers = make(map[string]string)
-	self.state = .Request_Line
+parser_create :: proc(buf: []u8, line_buf: []u8, body_buf: []u8) -> Parser {
+	return Parser{buf = cb.create(buf), line_buf = line_buf, body_buf = body_buf}
 }
 
-@(private)
-parser_deinit :: proc(self: ^Parser) {
-	delete(self.buf)
-	delete(self.req.headers)
-}
-
-@(private)
 parser_reset :: proc(self: ^Parser) {
-	self.state = .Request_Line
-	clear(&self.req.headers)
+	parser_destroy_request(&self.req)
+
 	self.req.method = ""
 	self.req.uri = ""
 	self.req.version = ""
-	self.req.body = nil
+	self.req.headers = {}
+	self.req.remaining = nil
 	self.req.content_length = 0
 
-	parser_compact(self)
+	self.state = .Request_Line
+	cb.clear(&self.buf)
 }
 
-@(private)
-parser_get_write_slice :: proc(self: ^Parser) -> []u8 {
-	if self.write_cursor == len(self.buf) && self.read_cursor > 0 {
-		parser_compact(self)
+parser_destroy_request :: proc(req: ^Request) {
+	delete(req.method)
+	delete(req.uri)
+	delete(req.version)
+
+	for k, v in req.headers {
+		delete_key(&req.headers, k)
+		delete(k)
+		delete(v)
 	}
-	return self.buf[self.write_cursor:]
+	delete(req.headers)
 }
 
-@(private)
+parser_peek_write :: proc(self: ^Parser) -> []u8 {
+	return cb.peek_write(&self.buf)
+}
+
 parser_commit_write :: proc(self: ^Parser, n: int) {
-	self.write_cursor += n
+	cb.commit_write(&self.buf, n)
 }
 
-@(private)
-parser_compact :: proc(self: ^Parser) {
-	unparsed_len := self.write_cursor - self.read_cursor
-	if unparsed_len > 0 {
-		copy(self.buf[:unparsed_len], self.buf[self.read_cursor:self.write_cursor])
-		self.write_cursor = unparsed_len
-	} else {
-		self.write_cursor = 0
-	}
-	self.read_cursor = 0
-}
-
-@(private)
-parser_parse :: proc(self: ^Parser) -> (completed: bool, err: bool) {
+parser_parse :: proc(self: ^Parser) -> (finished: bool, ok: bool) {
 	for {
-		#partial switch self.state {
+		switch self.state {
 		case .Request_Line:
-			line_buf, found := read_crlf_line(self)
-			if !found do return false, false
+			line, ok := parser_read_line(self)
+			if !ok do return false, true
 
-			line := transmute(string)(line_buf)
 			parts := strings.split(line, " ", context.temp_allocator)
-			if len(parts) != 3 do return false, true
+			if len(parts) != 3 do return false, false
 
-			self.req.method = parts[0]
-			self.req.uri = parts[1]
-			self.req.version = parts[2]
+			self.req.method = strings.clone(parts[0])
+			self.req.uri = strings.clone(parts[1])
+			self.req.version = strings.clone(parts[2])
 
 			self.state = .Headers
 		case .Headers:
-			line_buf, found := read_crlf_line(self)
-			if !found do return false, false
+			line, ok := parser_read_line(self)
+			if !ok do return false, true
 
-			line := transmute(string)(line_buf)
 			if line == "" {
 				self.req.remaining_bytes = self.req.content_length
+				self.state = .Body
 
-				unparsed_len := self.write_cursor - self.read_cursor
-				if unparsed_len > 0 && self.req.content_length > 0 {
-					body_bytes_in_buf := min(unparsed_len, self.req.content_length)
-					self.req.body = self.buf[self.read_cursor:self.read_cursor + body_bytes_in_buf]
-					self.read_cursor += body_bytes_in_buf
+				if self.buf.ra > 0 && self.req.content_length > 0 {
+					buf_len := min(self.buf.ra, self.req.content_length)
+					cb.read(&self.buf, self.body_buf[:buf_len])
+					self.req.remaining = self.body_buf[:buf_len]
 				} else {
-					self.req.body = nil
+					self.req.remaining = nil
 				}
 
-				self.state = .Complete
-				return true, false
+				return true, true
 			}
 
 			if idx := strings.index(line, ":"); idx != -1 {
-				key := strings.trim_space(line[:idx])
-				val := strings.trim_space(line[idx + 1:])
+				key := strings.clone(strings.trim_space(line[:idx]))
+				val := strings.clone(strings.trim_space(line[idx + 1:]))
 
 				self.req.headers[key] = val
 
 				if strings.equal_fold(key, "Content-Length") {
 					val_int, ok := strconv.parse_int(val)
-					if !ok do return false, true
+					if !ok do return false, false
 					self.req.content_length = val_int
 				}
 			}
-		case .Complete:
-			return true, false
+		case .Body:
+			return true, true
 		}
 	}
 }
 
-@(private = "file")
-read_crlf_line :: proc(self: ^Parser) -> (line: []u8, found: bool) {
-	data := self.buf[self.read_cursor:self.write_cursor]
+parser_read_line :: proc(self: ^Parser) -> (line: string, ok: bool) {
+	SEP :: []u8{'\r', '\n'}
 
-	for i in 0 ..< len(data) - 1 {
-		if data[i] == '\r' && data[i + 1] == '\n' {
-			line = data[:i]
-			self.read_cursor += i + 2
-			return line, true
-		}
-	}
+	idx := cb.index_of_bytes(&self.buf, SEP)
+	if idx == -1 do return "", false
 
-	return nil, false
+	dst := self.line_buf[:idx + len(SEP)]
+	cb.read(&self.buf, dst) or_return
+
+	return transmute(string)(dst[:idx]), true
+}
+
+@(test)
+test_read_line :: proc(t: ^testing.T) {
+	text := "GET / HTTP/1.1\r\nHeader: value\r\n\r\n"
+	back_buf := [1024]u8{}
+	line_buf := [256]u8{}
+	body_buf := [1024]u8{}
+
+	p := parser_create(back_buf[:], line_buf[:], body_buf[:])
+	cb.write(&p.buf, transmute([]u8)(text))
+	line, ok := parser_read_line(&p)
+
+	testing.expect(t, ok)
+	testing.expect(t, "GET / HTTP/1.1" == line)
 }
 
