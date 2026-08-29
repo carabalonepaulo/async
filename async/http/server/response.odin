@@ -85,7 +85,7 @@ response_send :: proc(
 ) -> (
 	ok: bool,
 ) {
-	buf: [BUFFER_SIZE]u8
+	buf: [TEMP_BUFFER_SIZE]u8
 	sb := strings.builder_from_slice(buf[:])
 
 	switch body in res.body {

@@ -9,23 +9,24 @@ import "core:net"
 import "core:strings"
 
 import "../.."
+import cb "../../circular_buffer"
 import "../../io"
 import "../../storage"
 
-REQUEST_BUFFER_SIZE :: 8 * mem.Kilobyte
-LINE_BUFFER_SIZE :: 1 * mem.Kilobyte
-BUFFER_SIZE :: 4096
+REQUEST_BUFFER_SIZE :: #config(HTTP_SERVER_BUFFER_SIZE, 4 * mem.Kilobyte)
+LINE_BUFFER_SIZE :: #config(HTTP_SERVER_LINE_SIZE, 4 * mem.Kilobyte)
+TEMP_BUFFER_SIZE :: #config(HTTP_SERVER_TEMP_SIZE, 4 * mem.Kilobyte)
+CONN_STACK_SIZE :: #config(HTTP_SERVER_STACK_SIZE, 4 * mem.Kilobyte)
 
 Request :: struct {
-	method:          string,
-	uri:             string,
-	version:         string,
-	headers:         map[string]string,
-	remaining:       []u8,
-	content_length:  int,
+	method:         string,
+	uri:            string,
+	version:        string,
+	headers:        map[string]string,
+	content_length: int,
 	//
-	socket:          net.TCP_Socket,
-	remaining_bytes: int,
+	socket:         net.TCP_Socket,
+	internal:       rawptr,
 }
 
 Client :: struct {
@@ -59,7 +60,7 @@ init :: proc(
 	init_mime_types(&self.mime_types)
 
 	storage.init(&self.clients)
-	async.spawn(self, begin_accept, stack_size = 64)
+	async.spawn(self, begin_accept, stack_size = CONN_STACK_SIZE)
 	return nil
 }
 
@@ -97,28 +98,28 @@ Receive_State :: struct {
 
 @(private = "file")
 begin_receive :: proc(state: Receive_State) {
-	// parser: Parser
-	// parser_init(&parser)
-	// defer parser_deinit(&parser)
+	buf, buf_err := make([]u8, REQUEST_BUFFER_SIZE + LINE_BUFFER_SIZE + TEMP_BUFFER_SIZE)
+	defer delete(buf)
 
-	parser_buf := make([]u8, REQUEST_BUFFER_SIZE)
-	defer delete(parser_buf)
-	line_buf := make([]u8, LINE_BUFFER_SIZE)
-	defer delete(line_buf)
-	body_buf := make([]u8, REQUEST_BUFFER_SIZE)
-	defer delete(body_buf)
-	parser := parser_create(parser_buf, line_buf, body_buf)
+	arena: mem.Arena
+	mem.arena_init(&arena, buf)
+	arena_alloc := mem.arena_allocator(&arena)
+
+	parser_buf := make([]u8, REQUEST_BUFFER_SIZE, arena_alloc)
+	line_buf := make([]u8, LINE_BUFFER_SIZE, arena_alloc)
+	temp_buf := make([]u8, TEMP_BUFFER_SIZE, arena_alloc)
+
+	parser: Parser
+	parser_init(&parser, parser_buf, line_buf)
+	defer parser_destroy_request(&parser.req)
 
 	res: Response
 	res.headers = make(map[string]string)
 	defer delete(res.headers)
 
-	temp_buf := make([]u8, BUFFER_SIZE)
-	defer delete(temp_buf)
-
-	arena: mem.Arena
-	mem.arena_init(&arena, temp_buf)
-	context.temp_allocator = mem.arena_allocator(&arena)
+	temp_arena: mem.Arena
+	mem.arena_init(&temp_arena, temp_buf)
+	context.temp_allocator = mem.arena_allocator(&temp_arena)
 
 	client, ok := storage.get_ptr(&state.server.clients, state.client_id)
 	if !ok do return
@@ -154,23 +155,21 @@ begin_receive :: proc(state: Receive_State) {
 }
 
 read :: proc(req: ^Request, dest_buf: []u8) -> (n: int, err: net.Recv_Error) {
-	if req.remaining_bytes <= 0 do return 0, nil
+	parser := (^Parser)(req.internal)
+	if parser.remaining_bytes <= 0 do return 0, nil
 
-	max_to_read := min(len(dest_buf), req.remaining_bytes)
+	max := min(len(dest_buf), parser.remaining_bytes)
+	dst := dest_buf[:max]
 
-	if req.remaining != nil && len(req.remaining) > 0 {
-		to_copy := min(max_to_read, len(req.remaining))
-		copy(dest_buf[:to_copy], req.remaining[:to_copy])
-
-		req.remaining = req.remaining[to_copy:]
-		req.remaining_bytes -= to_copy
-		return to_copy, nil
+	if cb.read(&parser.buf, dst) {
+		parser.remaining_bytes -= max
+		return max, nil
 	}
 
-	n = io.recv(req.socket, {dest_buf[:max_to_read]}) or_return
+	n = io.recv(req.socket, {dst}) or_return
 	if n == 0 do return 0, nil
 
-	req.remaining_bytes -= n
+	parser.remaining_bytes -= n
 	return n, nil
 }
 
