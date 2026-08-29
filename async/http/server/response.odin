@@ -1,6 +1,7 @@
 package async_http_server
 
 import "core:fmt"
+import "core:nbio"
 import "core:net"
 import "core:strconv"
 import "core:strings"
@@ -48,6 +49,7 @@ Status :: enum {
 	Range_Not_Satisfiable         = 416,
 	Unprocessable_Entity          = 422,
 	Too_Many_Requests             = 429,
+	Header_Fields_Too_Large       = 431,
 
 	// 5xx Server Errors
 	Internal_Server_Error         = 500,
@@ -79,7 +81,7 @@ response_reset :: proc(res: ^Response) {
 @(private)
 response_send :: proc(
 	server: ^Server,
-	client: ^Client,
+	sock: nbio.TCP_Socket,
 	req: ^Request,
 	res: ^Response,
 ) -> (
@@ -100,11 +102,11 @@ response_send :: proc(
 			strings.write_bytes(&sb, body)
 			text := strings.to_string(sb)
 			bytes := transmute([]u8)(text)
-			return try_send_all(client.sock, bytes)
+			return try_send_all(sock, bytes)
 		}
 
-		try_send_builder(client, &sb) or_return
-		if body_len > 0 do try_send_all(client.sock, body) or_return
+		try_send_builder(sock, &sb) or_return
+		if body_len > 0 do try_send_all(sock, body) or_return
 	case File_Path:
 		context.allocator = context.temp_allocator
 
@@ -113,7 +115,7 @@ response_send :: proc(
 		if open_err != nil {
 			res.status = .Not_Found
 			build(&sb, res)
-			return try_send_builder(client, &sb)
+			return try_send_builder(sock, &sb)
 		}
 		defer io.close(file)
 
@@ -121,7 +123,7 @@ response_send :: proc(
 		if stat_err != nil || type != .Regular {
 			res.status = .Internal_Server_Error
 			build(&sb, res)
-			return try_send_builder(client, &sb)
+			return try_send_builder(sock, &sb)
 		}
 
 		if "Content-Type" not_in res.headers {
@@ -144,13 +146,13 @@ response_send :: proc(
 				res.status = .Range_Not_Satisfiable
 				res.headers["Content-Range"] = fmt.tprintf("bytes */%d", size)
 				build(&sb, res, 0)
-				return try_send_builder(client, &sb)
+				return try_send_builder(sock, &sb)
 			}
 		}
 
 		build(&sb, res, length)
-		try_send_builder(client, &sb) or_return
-		send_err := io.send_file(client.sock, file, offset, length)
+		try_send_builder(sock, &sb) or_return
+		send_err := io.send_file(sock, file, offset, length)
 		if send_err != nil do return false
 	}
 
@@ -166,10 +168,10 @@ build :: proc(sb: ^strings.Builder, res: ^Response, size: int = 0) {
 }
 
 @(private = "file")
-try_send_builder :: proc(client: ^Client, sb: ^strings.Builder) -> bool {
+try_send_builder :: proc(sock: nbio.TCP_Socket, sb: ^strings.Builder) -> bool {
 	text := strings.to_string(sb^)
 	bytes := transmute([]u8)(text)
-	return try_send_all(client.sock, bytes)
+	return try_send_all(sock, bytes)
 }
 
 @(private = "file")
@@ -259,6 +261,8 @@ get_status_text :: proc(status: Status) -> string {
 		return "Unprocessable Entity"
 	case .Too_Many_Requests:
 		return "Too Many Requests"
+	case .Header_Fields_Too_Large:
+		return "Header Fields Too Large"
 
 	// 5xx
 	case .Internal_Server_Error:

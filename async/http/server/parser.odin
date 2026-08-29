@@ -1,14 +1,9 @@
 package async_http_server
 
 import cb "../../circular_buffer"
-import "core:fmt"
-import "core:os"
-import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
-
-MAX_LINE_SIZE :: 1024
 
 State :: enum {
 	Request_Line,

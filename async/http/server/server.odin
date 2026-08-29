@@ -1,8 +1,6 @@
 package async_http_server
 
-import "core:bytes"
 import "core:encoding/json"
-import "core:fmt"
 import "core:mem"
 import "core:nbio"
 import "core:net"
@@ -30,7 +28,7 @@ Request :: struct {
 }
 
 Client :: struct {
-	sock: net.TCP_Socket,
+	sock: nbio.TCP_Socket,
 }
 
 Server :: struct {
@@ -60,7 +58,7 @@ init :: proc(
 	init_mime_types(&self.mime_types)
 
 	storage.init(&self.clients)
-	async.spawn(self, begin_accept, stack_size = CONN_STACK_SIZE)
+	async.spawn(self, begin_accept, stack_size = 64)
 	return nil
 }
 
@@ -85,20 +83,27 @@ begin_accept :: proc(self: ^Server) {
 		if err != nil do break
 
 		client_id := storage.add(&self.clients, Client{sock})
-		client_state := Receive_State{self, client_id}
-		async.spawn(client_state, begin_receive)
+		client_state := Receive_State{self, client_id, sock}
+		async.spawn(client_state, begin_receive, stack_size = CONN_STACK_SIZE)
 	}
 }
 
 @(private = "file")
 Receive_State :: struct {
-	server:    ^Server,
-	client_id: u64,
+	server: ^Server,
+	id:     u64,
+	sock:   nbio.TCP_Socket,
 }
 
 @(private = "file")
 begin_receive :: proc(state: Receive_State) {
+	defer {
+		io.close(state.sock)
+		storage.remove(&state.server.clients, state.id)
+	}
+
 	buf, buf_err := make([]u8, REQUEST_BUFFER_SIZE + LINE_BUFFER_SIZE + TEMP_BUFFER_SIZE)
+	if buf_err != nil do return
 	defer delete(buf)
 
 	arena: mem.Arena
@@ -121,14 +126,22 @@ begin_receive :: proc(state: Receive_State) {
 	mem.arena_init(&temp_arena, temp_buf)
 	context.temp_allocator = mem.arena_allocator(&temp_arena)
 
-	client, ok := storage.get_ptr(&state.server.clients, state.client_id)
-	if !ok do return
-
-	outer: for {
+	for {
 		write_slice := parser_peek_write(&parser)
-		if len(write_slice) == 0 do break
+		if len(write_slice) == 0 {
+			switch parser.state {
+			case .Request_Line:
+				res.status = .URI_Too_Long
+			case .Headers:
+				res.status = .Header_Fields_Too_Large
+			case .Body:
+				res.status = .Bad_Request
+			}
+			response_send(state.server, state.sock, &parser.req, &res)
+			break
+		}
 
-		n, err := io.recv(client.sock, {write_slice})
+		n, err := io.recv(state.sock, {write_slice})
 		if n == 0 || err != nil do break
 
 		parser_commit_write(&parser, n)
@@ -136,7 +149,7 @@ begin_receive :: proc(state: Receive_State) {
 		completed, ok := parser_parse(&parser)
 		if !ok {
 			res.status = .Bad_Request
-			response_send(state.server, client, &parser.req, &res)
+			response_send(state.server, state.sock, &parser.req, &res)
 			break
 		}
 
@@ -144,14 +157,11 @@ begin_receive :: proc(state: Receive_State) {
 
 		response_reset(&res)
 		state.server.request_handler(state.server.state, &parser.req, &res)
-		if !response_send(state.server, client, &parser.req, &res) do break
+		if !response_send(state.server, state.sock, &parser.req, &res) do break
 
 		parser_reset(&parser)
 		mem.free_all(context.temp_allocator)
 	}
-
-	io.close(client.sock)
-	storage.remove(&state.server.clients, state.client_id)
 }
 
 read :: proc(req: ^Request, dest_buf: []u8) -> (n: int, err: net.Recv_Error) {
