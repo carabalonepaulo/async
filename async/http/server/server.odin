@@ -5,13 +5,15 @@ import "core:mem"
 import "core:nbio"
 import "core:net"
 import "core:strings"
+import "core:time"
 
 import "../.."
 import cb "../../circular_buffer"
 import "../../io"
 import "../../storage"
 
-REQUEST_BUFFER_SIZE :: #config(HTTP_SERVER_BUFFER_SIZE, 4 * mem.Kilobyte)
+REQUEST_BUFFER_SIZE :: #config(HTTP_SERVER_REQUEST_SIZE, 4 * mem.Kilobyte)
+RESPONSE_BUFFER_SIZE :: #config(HTTP_SERVER_RESPONSE_SIZE, 4 * mem.Kilobyte)
 LINE_BUFFER_SIZE :: #config(HTTP_SERVER_LINE_SIZE, 4 * mem.Kilobyte)
 TEMP_BUFFER_SIZE :: #config(HTTP_SERVER_TEMP_SIZE, 4 * mem.Kilobyte)
 CONN_STACK_SIZE :: #config(HTTP_SERVER_STACK_SIZE, 4 * mem.Kilobyte)
@@ -35,7 +37,7 @@ Server :: struct {
 	state:           rawptr,
 	sock:            net.TCP_Socket,
 	clients:         storage.Storage(Client),
-	request_handler: proc(state: rawptr, req: ^Request, res: ^Response),
+	request_handler: proc(state: rawptr, req: ^Request, res: ^Response) -> bool,
 	mime_types:      map[string]string,
 	open:            bool,
 }
@@ -44,7 +46,7 @@ init :: proc(
 	self: ^Server,
 	port: int,
 	state: rawptr,
-	request_handler: proc(state: rawptr, req: ^Request, res: ^Response),
+	request_handler: proc(state: rawptr, req: ^Request, res: ^Response) -> bool,
 ) -> (
 	err: net.Network_Error,
 ) {
@@ -81,6 +83,7 @@ begin_accept :: proc(self: ^Server) {
 	for {
 		sock, endpoint, err := io.accept(self.sock)
 		if err != nil do break
+		net.set_option(sock, .Linger, time.Duration(0))
 
 		client_id := storage.add(&self.clients, Client{sock})
 		client_state := Receive_State{self, client_id, sock}
@@ -102,7 +105,10 @@ begin_receive :: proc(state: Receive_State) {
 		storage.remove(&state.server.clients, state.id)
 	}
 
-	buf, buf_err := make([]u8, REQUEST_BUFFER_SIZE + LINE_BUFFER_SIZE + TEMP_BUFFER_SIZE)
+	buf, buf_err := make(
+		[]u8,
+		REQUEST_BUFFER_SIZE + RESPONSE_BUFFER_SIZE + (LINE_BUFFER_SIZE * 2) + TEMP_BUFFER_SIZE,
+	)
 	if buf_err != nil do return
 	defer delete(buf)
 
@@ -110,6 +116,8 @@ begin_receive :: proc(state: Receive_State) {
 	mem.arena_init(&arena, buf)
 	arena_alloc := mem.arena_allocator(&arena)
 
+	response_buf := make([]u8, RESPONSE_BUFFER_SIZE, arena_alloc)
+	response_line_buf := make([]u8, LINE_BUFFER_SIZE, arena_alloc)
 	parser_buf := make([]u8, REQUEST_BUFFER_SIZE, arena_alloc)
 	line_buf := make([]u8, LINE_BUFFER_SIZE, arena_alloc)
 	temp_buf := make([]u8, TEMP_BUFFER_SIZE, arena_alloc)
@@ -118,7 +126,15 @@ begin_receive :: proc(state: Receive_State) {
 	parser_init(&parser, parser_buf, line_buf)
 	defer parser_destroy_request(&parser.req)
 
+	res_internal := Response_Internal {
+		sock       = state.sock,
+		send_buf   = cb.create(response_buf),
+		line_buf   = response_line_buf,
+		mime_types = &state.server.mime_types,
+	}
+
 	res: Response
+	res.internal = &res_internal
 	res.headers = make(map[string]string)
 	defer delete(res.headers)
 
@@ -137,7 +153,7 @@ begin_receive :: proc(state: Receive_State) {
 			case .Body:
 				res.status = .Bad_Request
 			}
-			response_send(state.server, state.sock, &parser.req, &res)
+			send_headers(&res)
 			break
 		}
 
@@ -149,18 +165,22 @@ begin_receive :: proc(state: Receive_State) {
 		completed, ok := parser_parse(&parser)
 		if !ok {
 			res.status = .Bad_Request
-			response_send(state.server, state.sock, &parser.req, &res)
+			send_headers(&res)
 			break
 		}
 
 		if !completed do continue
 
 		response_reset(&res)
-		state.server.request_handler(state.server.state, &parser.req, &res)
-		if !response_send(state.server, state.sock, &parser.req, &res) do break
 
-		parser_reset(&parser)
-		mem.free_all(context.temp_allocator)
+		{
+			defer {
+				parser_reset(&parser)
+				mem.free_all(context.temp_allocator)
+			}
+
+			if ok := state.server.request_handler(state.server.state, &parser.req, &res); !ok do break
+		}
 	}
 }
 

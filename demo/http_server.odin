@@ -2,6 +2,7 @@ package main
 
 import "core:encoding/json"
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import "core:sys/windows"
 import "core:time"
@@ -24,10 +25,11 @@ ctrl_handler :: proc "stdcall" (ctrl_type: windows.DWORD) -> windows.BOOL {
 	return false
 }
 
-logger :: proc(ctx: ^router.Context) {
+logger :: proc(ctx: ^router.Context) -> (ok: bool) {
 	start := time.now()
 	router.next(ctx)
 	fmt.printfln("[%v] %d %v - %v", ctx.req.method, ctx.res.status, ctx.req.uri, time.since(start))
+	return true
 }
 
 http_server_demo :: proc() {
@@ -39,12 +41,11 @@ http_server_demo :: proc() {
 
 	router.use(&r, logger)
 
-	router.get(&r, "/echo", proc(ctx: ^router.Context) {
-		ctx.res.headers["Content-Type"] = "text/plain; charset=utf-8"
-		ctx.res.body = transmute([]u8)(http.get_body_as_text(ctx.req))
+	router.get(&r, "/echo", proc(ctx: ^router.Context) -> (ok: bool) {
+		return http.send_text(ctx.res, .Ok, http.get_body_as_text(ctx.req))
 	})
 
-	router.get(&r, "/json", proc(ctx: ^router.Context) {
+	router.get(&r, "/json", proc(ctx: ^router.Context) -> bool {
 		Value :: struct {
 			name: string,
 			age:  int,
@@ -59,14 +60,31 @@ http_server_demo :: proc() {
 		value, ok := http.get_body_as_json(ctx.req, Value)
 		if ok do result = Result{"success", fmt.tprint(value)}
 
-		buf, _ := json.marshal(result, allocator = context.temp_allocator)
-		ctx.res.headers["Content-Type"] = "application/json"
-		ctx.res.body = buf
+		return http.send_json(ctx.res, result)
 	})
 
-	router.get(&r, "/", proc(ctx: ^router.Context) {
+	router.get(&r, "/chunked", proc(ctx: ^router.Context) -> bool {
 		ctx.res.headers["Content-Type"] = "text/plain; charset=utf-8"
-		ctx.res.body = transmute([]u8)(strings.clone("hello world!", context.temp_allocator))
+
+		http.begin_chunked(ctx.res, .Ok) or_return
+		defer http.end_chunked(ctx.res)
+
+		for i in 0 ..< 5 {
+			msg := fmt.tprintf("chunk #%d\n", i)
+			http.send_chunk(ctx.res, transmute([]u8)(msg))
+		}
+
+		return true
+	})
+
+	router.get(&r, "/file", proc(ctx: ^router.Context) -> bool {
+		file_path := `C:\Users\kelaia\Videos\camera_clamp.mp4`
+		return http.send_file(ctx.req, ctx.res, file_path)
+	})
+
+	router.get(&r, "/", proc(ctx: ^router.Context) -> bool {
+		ctx.res.headers["Content-Type"] = "text/plain; charset=utf-8"
+		return http.send_text(ctx.res, .Ok, "hello, world!")
 	})
 
 	server: http.Server

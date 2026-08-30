@@ -1,7 +1,6 @@
 package async_http_server_router
 
 import ".."
-import "core:strings"
 
 Middleware :: struct {}
 
@@ -14,7 +13,7 @@ Context :: struct {
 	idx:      int,
 }
 
-Handler :: proc(ctx: ^Context)
+Handler :: proc(ctx: ^Context) -> bool
 
 Route :: struct {
 	method:   string,
@@ -51,7 +50,7 @@ use :: proc(router: ^Router, handler: Handler) {
 	append(&router.handlers, handler)
 }
 
-dispatch :: proc(ud: rawptr, req: ^server.Request, res: ^server.Response) {
+dispatch :: proc(ud: rawptr, req: ^server.Request, res: ^server.Response) -> bool {
 	router := (^Router)(ud)
 
 	target_route: ^Route = nil
@@ -79,7 +78,11 @@ dispatch :: proc(ud: rawptr, req: ^server.Request, res: ^server.Response) {
 		idx      = 0,
 	}
 
-	if len(ctx.handlers) > 0 do ctx.handlers[0](&ctx)
+	if len(ctx.handlers) > 0 {
+		return ctx.handlers[0](&ctx)
+	}
+
+	return true
 }
 
 post :: proc(router: ^Router, path: string, handler: Handler, mws: ..Handler) {
@@ -105,9 +108,7 @@ get :: proc(router: ^Router, path: string, handler: Handler, mws: ..Handler) {
 }
 
 @(private = "file")
-not_found :: proc(ctx: ^Context) {
-	ctx.res.status = .Not_Found
-	ctx.res.headers["Content-Type"] = "text/plain; charset=utf-8"
-	ctx.res.body = transmute([]u8)(strings.clone("404 Not Found", context.temp_allocator))
+not_found :: proc(ctx: ^Context) -> bool {
+	return server.send_text(ctx.res, .Not_Found, "404 Not Found")
 }
 

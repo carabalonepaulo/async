@@ -1,285 +1,198 @@
 package async_http_server
 
+import "core:encoding/json"
 import "core:fmt"
 import "core:nbio"
 import "core:net"
 import "core:strconv"
 import "core:strings"
 
+import cb "../../circular_buffer"
 import "../../io"
 
-Status :: enum {
-	// 1xx Informational
-	Continue                      = 100,
-	Switching_Protocols           = 101,
-
-	// 2xx Success
-	Ok                            = 200,
-	Created                       = 201,
-	Accepted                      = 202,
-	Non_Authoritative_Information = 203,
-	No_Content                    = 204,
-	Reset_Content                 = 205,
-	Partial_Content               = 206,
-
-	// 3xx Redirection
-	Multiple_Choices              = 300,
-	Moved_Permanently             = 301,
-	Found                         = 302,
-	See_Other                     = 303,
-	Not_Modified                  = 304,
-	Temporary_Redirect            = 307,
-	Permanent_Redirect            = 308,
-
-	// 4xx Client Errors
-	Bad_Request                   = 400,
-	Unauthorized                  = 401,
-	Payment_Required              = 402,
-	Forbidden                     = 403,
-	Not_Found                     = 404,
-	Method_Not_Allowed            = 405,
-	Not_Acceptable                = 406,
-	Request_Timeout               = 408,
-	Conflict                      = 409,
-	Gone                          = 410,
-	Length_Required               = 411,
-	Payload_Too_Large             = 413,
-	URI_Too_Long                  = 414,
-	Unsupported_Media_Type        = 415,
-	Range_Not_Satisfiable         = 416,
-	Unprocessable_Entity          = 422,
-	Too_Many_Requests             = 429,
-	Header_Fields_Too_Large       = 431,
-
-	// 5xx Server Errors
-	Internal_Server_Error         = 500,
-	Not_Implemented               = 501,
-	Bad_Gateway                   = 502,
-	Service_Unavailable           = 503,
-	Gateway_Timeout               = 504,
-	HTTP_Version_Not_Supported    = 505,
+@(private)
+Response_Internal :: struct {
+	sock:       nbio.TCP_Socket,
+	send_buf:   cb.Circular_Buffer,
+	line_buf:   []u8,
+	mime_types: ^map[string]string,
 }
 
-File_Path :: distinct string
-
 Response :: struct {
-	status:  Status,
-	headers: map[string]string,
-	body:    union {
-		[]u8,
-		File_Path,
-	},
+	status:   Status,
+	headers:  map[string]string,
+	internal: rawptr,
 }
 
 @(private)
 response_reset :: proc(res: ^Response) {
 	res.status = .Ok
 	clear(&res.headers)
-	res.body = nil
+
+	internal := (^Response_Internal)(res.internal)
+	cb.clear(&internal.send_buf)
+}
+
+send_headers :: proc(res: ^Response) -> (ok: bool) {
+	internal := (^Response_Internal)(res.internal)
+	send_buf := &internal.send_buf
+	line_buf := internal.line_buf
+
+	line := fmt.bprintf(
+		line_buf,
+		"HTTP/1.1 %d %s\r\n",
+		int(res.status),
+		get_status_text(res.status),
+	)
+	if !cb.write(send_buf, transmute([]u8)(line)) do return false
+
+	res.headers["Connection"] = "keep-alive"
+
+	for k, v in res.headers {
+		line = fmt.bprintf(line_buf, "%s: %s\r\n", k, v)
+		if !cb.can_write(send_buf, len(line)) do flush(internal.sock, send_buf) or_return
+		cb.write(send_buf, transmute([]u8)(line))
+	}
+
+	if !cb.can_write(send_buf, 2) do flush(internal.sock, send_buf) or_return
+	cb.write(send_buf, {'\r', '\n'})
+	return flush(internal.sock, send_buf)
+}
+
+send :: proc(res: ^Response, buf: []u8) -> (ok: bool) {
+	internal := (^Response_Internal)(res.internal)
+	send_buf := &internal.send_buf
+
+	res.headers["Content-Length"] = fmt.tprint(len(buf))
+	send_headers(res) or_return
+
+	_send_buf(internal.sock, buf, send_buf)
+
+	if send_buf.ra > 0 do flush(internal.sock, send_buf) or_return
+	return true
+}
+
+send_text :: proc(res: ^Response, status: Status, text: string) -> (ok: bool) {
+	res.headers["Content-Type"] = "text/plain; charset=utf-8"
+	res.status = status
+	return send(res, transmute([]u8)(text))
+}
+
+send_file :: proc(req: ^Request, res: ^Response, file_path: string) -> (ok: bool) {
+	internal := (^Response_Internal)(res.internal)
+
+	file, open_err := io.open(file_path, {.Read})
+	if open_err != nil do return send_text(res, .Not_Found, "")
+
+	type, size, stat_err := io.stat(file)
+	if stat_err != nil || type != .Regular do return send_text(res, .Internal_Server_Error, "")
+
+	if "Content-Type" not_in res.headers {
+		res.headers["Content-Type"] = get_mime_type_from_path(internal.mime_types, file_path)
+	}
+	res.headers["Accept-Ranges"] = "bytes"
+
+	offset: int = 0
+	length: int = int(size)
+
+	if range_header, has_range := req.headers["Range"]; has_range {
+		start, end, valid := parse_range_header(range_header, int(size))
+		if valid {
+			res.status = .Partial_Content
+			offset = start
+			length = (end - start) + 1
+			res.headers["Content-Range"] = fmt.tprintf("bytes %d-%d/%d", start, end, size)
+		} else {
+			res.status = .Range_Not_Satisfiable
+			res.headers["Content-Range"] = fmt.tprintf("bytes */%d", size)
+			res.headers["Content-Length"] = "0"
+			return send_headers(res)
+		}
+	}
+
+	res.headers["Content-Length"] = fmt.tprint(length)
+	send_headers(res) or_return
+
+	cb :: proc(op: ^nbio.Operation) {nbio.close(op.sendfile.file)}
+	nbio.sendfile(internal.sock, file, cb, offset, length)
+
+	return true
+}
+
+send_json :: proc(res: ^Response, value: $T) -> (ok: bool) {
+	buf, json_err := json.marshal(value, allocator = context.temp_allocator)
+	if json_err != nil {
+		res.status = .Internal_Server_Error
+		res.headers["Content-Length"] = "0"
+		return send_headers(res)
+	}
+
+	res.headers["Content-Type"] = "application/json"
+	return send(res, buf)
+}
+
+begin_chunked :: proc(res: ^Response, status: Status = .Ok) -> (ok: bool) {
+	res.status = status
+	res.headers["Transfer-Encoding"] = "chunked"
+	delete_key(&res.headers, "Content-Length")
+	send_headers(res) or_return
+	return true
+}
+
+send_chunk :: proc(res: ^Response, buf: []u8) -> (ok: bool) {
+	if len(buf) == 0 do return true
+
+	internal := (^Response_Internal)(res.internal)
+	send_buf := &internal.send_buf
+	line_buf := internal.line_buf
+
+	line := fmt.bprintf(line_buf, "%x\r\n", len(buf))
+
+	if !cb.can_write(send_buf, len(line)) do flush(internal.sock, send_buf) or_return
+	cb.write(send_buf, transmute([]u8)line)
+
+	_send_buf(internal.sock, buf, send_buf)
+
+	if !cb.can_write(send_buf, 2) do flush(internal.sock, send_buf) or_return
+	cb.write(send_buf, {'\r', '\n'})
+
+	return flush(internal.sock, send_buf)
+}
+
+end_chunked :: proc(res: ^Response) -> (ok: bool) {
+	internal := (^Response_Internal)(res.internal)
+	send_buf := &internal.send_buf
+
+	if !cb.can_write(send_buf, 5) do flush(internal.sock, send_buf) or_return
+	cb.write(send_buf, {'0', '\r', '\n', '\r', '\n'})
+
+	return flush(internal.sock, send_buf)
 }
 
 @(private)
-response_send :: proc(
-	server: ^Server,
-	sock: nbio.TCP_Socket,
-	req: ^Request,
-	res: ^Response,
-) -> (
-	ok: bool,
-) {
-	buf: [TEMP_BUFFER_SIZE]u8
-	sb := strings.builder_from_slice(buf[:])
-
-	switch body in res.body {
-	case []u8:
-		body_len := len(body)
-		build(&sb, res, body_len)
-
-		bytes_written := strings.builder_len(sb)
-		remaining := len(buf) - bytes_written
-
-		if body_len > 0 && body_len <= remaining {
-			strings.write_bytes(&sb, body)
-			text := strings.to_string(sb)
-			bytes := transmute([]u8)(text)
-			return try_send_all(sock, bytes)
+_send_buf :: proc(sock: nbio.TCP_Socket, buf: []u8, send_buf: ^cb.Circular_Buffer) -> (ok: bool) {
+	remaining := buf
+	for len(remaining) > 0 {
+		send_len := min(len(remaining), send_buf.wa)
+		if send_len > 0 {
+			cb.write(send_buf, remaining[:send_len])
+			remaining = remaining[send_len:]
 		}
-
-		try_send_builder(sock, &sb) or_return
-		if body_len > 0 do try_send_all(sock, body) or_return
-	case File_Path:
-		context.allocator = context.temp_allocator
-
-		path := (string)(body)
-		file, open_err := io.open(path, {.Read})
-		if open_err != nil {
-			res.status = .Not_Found
-			build(&sb, res)
-			return try_send_builder(sock, &sb)
-		}
-		defer io.close(file)
-
-		type, size, stat_err := io.stat(file)
-		if stat_err != nil || type != .Regular {
-			res.status = .Internal_Server_Error
-			build(&sb, res)
-			return try_send_builder(sock, &sb)
-		}
-
-		if "Content-Type" not_in res.headers {
-			res.headers["Content-Type"] = get_mime_type_from_path(&server.mime_types, path)
-		}
-
-		res.headers["Accept-Ranges"] = "bytes"
-
-		offset: int = 0
-		length: int = int(size)
-
-		if range_header, has_range := req.headers["Range"]; has_range {
-			start, end, valid := parse_range_header(range_header, int(size))
-			if valid {
-				res.status = .Partial_Content
-				offset = start
-				length = (end - start) + 1
-				res.headers["Content-Range"] = fmt.tprintf("bytes %d-%d/%d", start, end, size)
-			} else {
-				res.status = .Range_Not_Satisfiable
-				res.headers["Content-Range"] = fmt.tprintf("bytes */%d", size)
-				build(&sb, res, 0)
-				return try_send_builder(sock, &sb)
-			}
-		}
-
-		build(&sb, res, length)
-		try_send_builder(sock, &sb) or_return
-		send_err := io.send_file(sock, file, offset, length)
-		if send_err != nil do return false
+		flush(sock, send_buf) or_return
 	}
-
 	return true
 }
 
-@(private = "file")
-build :: proc(sb: ^strings.Builder, res: ^Response, size: int = 0) {
-	fmt.sbprintf(sb, "HTTP/1.1 %d %s\r\n", int(res.status), get_status_text(res.status))
-	for k, v in res.headers do fmt.sbprintf(sb, "%s: %s\r\n", k, v)
-	fmt.sbprintf(sb, "Content-Length: %d\r\n", size)
-	strings.write_string(sb, "Connection: keep-alive\r\n\r\n")
-}
-
-@(private = "file")
-try_send_builder :: proc(sock: nbio.TCP_Socket, sb: ^strings.Builder) -> bool {
-	text := strings.to_string(sb^)
-	bytes := transmute([]u8)(text)
-	return try_send_all(sock, bytes)
-}
-
-@(private = "file")
-try_send_all :: proc(sock: net.TCP_Socket, buf: []u8) -> bool {
-	buf := buf
-	for len(buf) > 0 {
+@(private)
+flush :: proc(sock: net.TCP_Socket, send_buf: ^cb.Circular_Buffer) -> (ok: bool) {
+	for {
+		buf := cb.peek_read(send_buf)
+		if len(buf) == 0 do break
 		n, err := io.send(sock, {buf})
 		if err != nil || n <= 0 do return false
-		buf = buf[n:]
+		cb.commit_read(send_buf, n)
 	}
 	return true
-}
-
-@(private = "file")
-get_status_text :: proc(status: Status) -> string {
-	switch status {
-	// 1xx
-	case .Continue:
-		return "Continue"
-	case .Switching_Protocols:
-		return "Switching Protocols"
-
-	// 2xx
-	case .Ok:
-		return "Ok"
-	case .Created:
-		return "Created"
-	case .Accepted:
-		return "Accepted"
-	case .Non_Authoritative_Information:
-		return "Non-Authoritative Information"
-	case .No_Content:
-		return "No Content"
-	case .Reset_Content:
-		return "Reset Content"
-	case .Partial_Content:
-		return "Partial Content"
-
-	// 3xx
-	case .Multiple_Choices:
-		return "Multiple Choices"
-	case .Moved_Permanently:
-		return "Moved Permanently"
-	case .Found:
-		return "Found"
-	case .See_Other:
-		return "See Other"
-	case .Not_Modified:
-		return "Not Modified"
-	case .Temporary_Redirect:
-		return "Temporary Redirect"
-	case .Permanent_Redirect:
-		return "Permanent Redirect"
-
-	// 4xx
-	case .Bad_Request:
-		return "Bad Request"
-	case .Unauthorized:
-		return "Unauthorized"
-	case .Payment_Required:
-		return "Payment Required"
-	case .Forbidden:
-		return "Forbidden"
-	case .Not_Found:
-		return "Not Found"
-	case .Method_Not_Allowed:
-		return "Method Not Allowed"
-	case .Not_Acceptable:
-		return "Not Acceptable"
-	case .Request_Timeout:
-		return "Request Timeout"
-	case .Conflict:
-		return "Conflict"
-	case .Gone:
-		return "Gone"
-	case .Length_Required:
-		return "Length Required"
-	case .Payload_Too_Large:
-		return "Payload Too Large"
-	case .URI_Too_Long:
-		return "URI Too Long"
-	case .Unsupported_Media_Type:
-		return "Unsupported Media Type"
-	case .Range_Not_Satisfiable:
-		return "Range Not Satisfiable"
-	case .Unprocessable_Entity:
-		return "Unprocessable Entity"
-	case .Too_Many_Requests:
-		return "Too Many Requests"
-	case .Header_Fields_Too_Large:
-		return "Header Fields Too Large"
-
-	// 5xx
-	case .Internal_Server_Error:
-		return "Internal Server Error"
-	case .Not_Implemented:
-		return "Not Implemented"
-	case .Bad_Gateway:
-		return "Bad Gateway"
-	case .Service_Unavailable:
-		return "Service Unavailable"
-	case .Gateway_Timeout:
-		return "Gateway Timeout"
-	case .HTTP_Version_Not_Supported:
-		return "HTTP Version Not Supported"
-	}
-
-	return "Unknown"
 }
 
 @(private = "file")
