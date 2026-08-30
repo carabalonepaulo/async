@@ -63,6 +63,26 @@ http_server_demo :: proc() {
 		return http.send_json(ctx.res, result)
 	})
 
+	router.get(&r, "/sse", proc(ctx: ^router.Context) -> bool {
+		http.begin_sse(ctx.res) or_return
+		defer http.end_sse(ctx.res)
+
+		for i in 0 ..< 5 {
+			msg := fmt.tprintf("message #%d", i)
+
+			http.send_sse(
+				ctx.res,
+				data = transmute([]u8)(msg),
+				event = "ping",
+				id = fmt.tprintf("%d", i),
+			) or_return
+
+			async.sleep(time.Second)
+		}
+
+		return true
+	})
+
 	router.get(&r, "/chunked", proc(ctx: ^router.Context) -> bool {
 		ctx.res.headers["Content-Type"] = "text/plain; charset=utf-8"
 

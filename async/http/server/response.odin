@@ -1,5 +1,6 @@
 package async_http_server
 
+import "core:bytes"
 import "core:encoding/json"
 import "core:fmt"
 import "core:nbio"
@@ -169,6 +170,101 @@ end_chunked :: proc(res: ^Response) -> (ok: bool) {
 	return flush(internal.sock, send_buf)
 }
 
+begin_sse :: proc(res: ^Response) -> (ok: bool) {
+	res.headers["Content-Type"] = "text/event-stream"
+	res.headers["Cache-Control"] = "no-cache"
+	res.headers["Connection"] = "keep-alive"
+	return begin_chunked(res, .Ok)
+}
+
+send_sse :: proc(
+	res: ^Response,
+	data: []u8,
+	event: string = "",
+	id: string = "",
+	retry: int = 0,
+) -> (
+	ok: bool,
+) {
+	internal := (^Response_Internal)(res.internal)
+	send_buf := &internal.send_buf
+	line_buf := internal.line_buf
+
+	payload_len := 0
+	if retry > 0 do payload_len += 7 + count_digits(retry) + 1
+	if len(id) > 0 do payload_len += 4 + len(id) + 1
+	if len(event) > 0 do payload_len += 7 + len(event) + 1
+
+	if len(data) > 0 {
+		remaining := data
+		for len(remaining) > 0 {
+			payload_len += 6
+			idx := bytes.index_byte(remaining, '\n')
+			if idx != -1 {
+				payload_len += idx + 1
+				remaining = remaining[idx + 1:]
+			} else {
+				payload_len += len(remaining) + 1
+				break
+			}
+		}
+	}
+
+	payload_len += 1
+	if payload_len == 1 do return true
+
+	chunk_header := fmt.bprintf(line_buf, "%x\r\n", payload_len)
+	_send_str(internal.sock, chunk_header, send_buf) or_return
+
+	if retry > 0 {
+		line := fmt.bprintf(line_buf, "retry: %d\n", retry)
+		_send_str(internal.sock, line, send_buf) or_return
+	}
+
+	if len(id) > 0 {
+		line := fmt.bprintf(line_buf, "id: %s\n", id)
+		_send_str(internal.sock, line, send_buf) or_return
+	}
+
+	if len(event) > 0 {
+		line := fmt.bprintf(line_buf, "event: %s\n", event)
+		_send_str(internal.sock, line, send_buf) or_return
+	}
+
+	if len(data) > 0 {
+		remaining := data
+		for len(remaining) > 0 {
+			_send_str(internal.sock, "data: ", send_buf) or_return
+
+			idx := bytes.index_byte(remaining, '\n')
+			if idx != -1 {
+				_send_buf(internal.sock, remaining[:idx + 1], send_buf) or_return
+				remaining = remaining[idx + 1:]
+			} else {
+				_send_buf(internal.sock, remaining, send_buf) or_return
+				_send_str(internal.sock, "\n", send_buf) or_return
+				break
+			}
+		}
+	}
+
+	_send_str(internal.sock, "\n\r\n", send_buf) or_return
+	return flush(internal.sock, send_buf)
+}
+
+end_sse :: end_chunked
+
+@(private)
+_send_str :: #force_inline proc(
+	sock: nbio.TCP_Socket,
+	text: string,
+	send_buf: ^cb.Circular_Buffer,
+) -> (
+	ok: bool,
+) {
+	return _send_buf(sock, transmute([]u8)(text), send_buf)
+}
+
 @(private)
 _send_buf :: proc(sock: nbio.TCP_Socket, buf: []u8, send_buf: ^cb.Circular_Buffer) -> (ok: bool) {
 	remaining := buf
@@ -178,7 +274,7 @@ _send_buf :: proc(sock: nbio.TCP_Socket, buf: []u8, send_buf: ^cb.Circular_Buffe
 			cb.write(send_buf, remaining[:send_len])
 			remaining = remaining[send_len:]
 		}
-		flush(sock, send_buf) or_return
+		if len(remaining) > 0 do flush(sock, send_buf) or_return
 	}
 	return true
 }
@@ -240,5 +336,17 @@ parse_range_header :: proc(
 	if start > end do return 0, 0, false
 
 	return start, end, true
+}
+
+@(private = "file")
+count_digits :: #force_inline proc(n: int) -> int {
+	if n == 0 do return 1
+	count := 0
+	val := n
+	for val > 0 {
+		val /= 10
+		count += 1
+	}
+	return count
 }
 
