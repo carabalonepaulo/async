@@ -44,7 +44,7 @@ send_headers :: proc(res: ^Response) -> (ok: bool) {
 		int(res.status),
 		get_status_text(res.status),
 	)
-	if !cb.write(send_buf, transmute([]u8)(line)) do return false
+	_send_buf(internal, transmute([]u8)(line)) or_return
 
 	res.headers["Connection"] = "keep-alive"
 
@@ -64,7 +64,7 @@ send :: proc(res: ^Response, buf: []u8) -> (ok: bool) {
 	res.headers["Content-Length"] = fmt.tprint(len(buf))
 	send_headers(res) or_return
 
-	_send_buf(internal, buf)
+	_send_buf(internal, buf) or_return
 
 	if send_buf.ra > 0 do flush(internal) or_return
 	return true
@@ -141,12 +141,9 @@ send_chunk :: proc(res: ^Response, buf: []u8) -> (ok: bool) {
 	if len(buf) == 0 do return true
 
 	internal := (^Response_Internal)(res.internal)
-	send_buf := &internal.send_buf
 	line_buf := internal.line_buf
 
-	line := fmt.bprintf(line_buf, "%x\r\n", len(buf))
-
-	_send_buf(internal, transmute([]u8)(line)) or_return
+	_send_fmt(internal, count_hex_digits(len(buf)) + 2, "%x\r\n", len(buf)) or_return
 	_send_buf(internal, buf) or_return
 	_send_buf(internal, {'\r', '\n'}) or_return
 
@@ -181,7 +178,9 @@ send_sse :: proc(
 	line_buf := internal.line_buf
 
 	payload_len := 0
-	if retry > 0 do payload_len += 7 + count_digits(retry) + 1
+	retry_digits := count_decimal_digits(retry)
+
+	if retry > 0 do payload_len += 7 + retry_digits + 1
 	if len(id) > 0 do payload_len += 4 + len(id) + 1
 	if len(event) > 0 do payload_len += 7 + len(event) + 1
 
@@ -202,24 +201,11 @@ send_sse :: proc(
 
 	payload_len += 1
 	if payload_len == 1 do return true
+	_send_fmt(internal, count_hex_digits(payload_len) + 2, "%x\r\n", payload_len) or_return
 
-	chunk_header := fmt.bprintf(line_buf, "%x\r\n", payload_len)
-	_send_str(internal, chunk_header) or_return
-
-	if retry > 0 {
-		line := fmt.bprintf(line_buf, "retry: %d\n", retry)
-		_send_str(internal, line) or_return
-	}
-
-	if len(id) > 0 {
-		line := fmt.bprintf(line_buf, "id: %s\n", id)
-		_send_str(internal, line) or_return
-	}
-
-	if len(event) > 0 {
-		line := fmt.bprintf(line_buf, "event: %s\n", event)
-		_send_str(internal, line) or_return
-	}
+	if retry > 0 do _send_fmt(internal, len("retry: \n") + retry_digits, "retry: %d\n", retry) or_return
+	if len(id) > 0 do _send_fmt(internal, len("id: \n") + len(id), "id: %s\n", id) or_return
+	if len(event) > 0 do _send_fmt(internal, len("event: \n") + len(event), "event: %s\n", event) or_return
 
 	if len(data) > 0 {
 		remaining := data
@@ -243,6 +229,38 @@ send_sse :: proc(
 }
 
 end_sse :: end_chunked
+
+@(private)
+_send_fmt :: proc(
+	internal: ^Response_Internal,
+	estimated_size: int,
+	pat: string,
+	args: ..any,
+) -> (
+	ok: bool,
+) {
+	write_buf := cb.peek_write(&internal.send_buf)
+
+	if len(write_buf) < estimated_size {
+		flush(internal) or_return
+		if cb.is_empty(&internal.send_buf) do cb.clear(&internal.send_buf)
+		write_buf = cb.peek_write(&internal.send_buf)
+
+		when LINE_BUFFER_SIZE <= RESPONSE_BUFFER_SIZE {
+			if len(write_buf) < estimated_size do return false
+		} else {
+			if len(write_buf) < estimated_size && len(internal.line_buf) >= estimated_size {
+				line := fmt.bprintf(internal.line_buf, pat, ..args)
+				return _send_str(internal, line)
+			} else do return false
+		}
+	}
+
+	fmtd := fmt.bprintf(write_buf, pat, ..args)
+	cb.commit_write(&internal.send_buf, len(fmtd))
+
+	return true
+}
 
 @(private)
 _send_str :: #force_inline proc(internal: ^Response_Internal, text: string) -> (ok: bool) {
@@ -323,12 +341,24 @@ parse_range_header :: proc(
 }
 
 @(private = "file")
-count_digits :: #force_inline proc(n: int) -> int {
+count_decimal_digits :: #force_inline proc(n: int) -> int {
+	val := abs(n)
 	if n == 0 do return 1
 	count := 0
-	val := n
 	for val > 0 {
 		val /= 10
+		count += 1
+	}
+	return count
+}
+
+@(private = "file")
+count_hex_digits :: #force_inline proc(n: int) -> int {
+	val := abs(n)
+	if n == 0 do return 1
+	count := 0
+	for val > 0 {
+		val >>= 4
 		count += 1
 	}
 	return count

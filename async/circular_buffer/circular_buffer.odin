@@ -164,6 +164,10 @@ commit_write :: proc(self: ^Circular_Buffer, n: int) -> (ok: bool) {
 	return true
 }
 
+is_empty :: #force_inline proc(self: ^Circular_Buffer) -> bool {
+	return self.ra == 0
+}
+
 clear :: proc(self: ^Circular_Buffer) {
 	self.wc = 0
 	self.rc = 0
