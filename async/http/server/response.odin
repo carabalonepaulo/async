@@ -4,7 +4,6 @@ import "core:bytes"
 import "core:encoding/json"
 import "core:fmt"
 import "core:nbio"
-import "core:net"
 import "core:strconv"
 import "core:strings"
 
@@ -51,13 +50,11 @@ send_headers :: proc(res: ^Response) -> (ok: bool) {
 
 	for k, v in res.headers {
 		line = fmt.bprintf(line_buf, "%s: %s\r\n", k, v)
-		if !cb.can_write(send_buf, len(line)) do flush(internal.sock, send_buf) or_return
-		cb.write(send_buf, transmute([]u8)(line))
+		_send_buf(internal, transmute([]u8)(line)) or_return
 	}
 
-	if !cb.can_write(send_buf, 2) do flush(internal.sock, send_buf) or_return
-	cb.write(send_buf, {'\r', '\n'})
-	return flush(internal.sock, send_buf)
+	_send_buf(internal, {'\r', '\n'}) or_return
+	return flush(internal)
 }
 
 send :: proc(res: ^Response, buf: []u8) -> (ok: bool) {
@@ -67,9 +64,9 @@ send :: proc(res: ^Response, buf: []u8) -> (ok: bool) {
 	res.headers["Content-Length"] = fmt.tprint(len(buf))
 	send_headers(res) or_return
 
-	_send_buf(internal.sock, buf, send_buf)
+	_send_buf(internal, buf)
 
-	if send_buf.ra > 0 do flush(internal.sock, send_buf) or_return
+	if send_buf.ra > 0 do flush(internal) or_return
 	return true
 }
 
@@ -149,25 +146,18 @@ send_chunk :: proc(res: ^Response, buf: []u8) -> (ok: bool) {
 
 	line := fmt.bprintf(line_buf, "%x\r\n", len(buf))
 
-	if !cb.can_write(send_buf, len(line)) do flush(internal.sock, send_buf) or_return
-	cb.write(send_buf, transmute([]u8)line)
+	_send_buf(internal, transmute([]u8)(line)) or_return
+	_send_buf(internal, buf) or_return
+	_send_buf(internal, {'\r', '\n'}) or_return
 
-	_send_buf(internal.sock, buf, send_buf)
-
-	if !cb.can_write(send_buf, 2) do flush(internal.sock, send_buf) or_return
-	cb.write(send_buf, {'\r', '\n'})
-
-	return flush(internal.sock, send_buf)
+	return flush(internal)
 }
 
 end_chunked :: proc(res: ^Response) -> (ok: bool) {
 	internal := (^Response_Internal)(res.internal)
 	send_buf := &internal.send_buf
-
-	if !cb.can_write(send_buf, 5) do flush(internal.sock, send_buf) or_return
-	cb.write(send_buf, {'0', '\r', '\n', '\r', '\n'})
-
-	return flush(internal.sock, send_buf)
+	_send_buf(internal, {'0', '\r', '\n', '\r', '\n'}) or_return
+	return flush(internal)
 }
 
 begin_sse :: proc(res: ^Response) -> (ok: bool) {
@@ -214,79 +204,73 @@ send_sse :: proc(
 	if payload_len == 1 do return true
 
 	chunk_header := fmt.bprintf(line_buf, "%x\r\n", payload_len)
-	_send_str(internal.sock, chunk_header, send_buf) or_return
+	_send_str(internal, chunk_header) or_return
 
 	if retry > 0 {
 		line := fmt.bprintf(line_buf, "retry: %d\n", retry)
-		_send_str(internal.sock, line, send_buf) or_return
+		_send_str(internal, line) or_return
 	}
 
 	if len(id) > 0 {
 		line := fmt.bprintf(line_buf, "id: %s\n", id)
-		_send_str(internal.sock, line, send_buf) or_return
+		_send_str(internal, line) or_return
 	}
 
 	if len(event) > 0 {
 		line := fmt.bprintf(line_buf, "event: %s\n", event)
-		_send_str(internal.sock, line, send_buf) or_return
+		_send_str(internal, line) or_return
 	}
 
 	if len(data) > 0 {
 		remaining := data
 		for len(remaining) > 0 {
-			_send_str(internal.sock, "data: ", send_buf) or_return
+			_send_str(internal, "data: ") or_return
 
 			idx := bytes.index_byte(remaining, '\n')
 			if idx != -1 {
-				_send_buf(internal.sock, remaining[:idx + 1], send_buf) or_return
+				_send_buf(internal, remaining[:idx + 1]) or_return
 				remaining = remaining[idx + 1:]
 			} else {
-				_send_buf(internal.sock, remaining, send_buf) or_return
-				_send_str(internal.sock, "\n", send_buf) or_return
+				_send_buf(internal, remaining) or_return
+				_send_str(internal, "\n") or_return
 				break
 			}
 		}
 	}
 
-	_send_str(internal.sock, "\n\r\n", send_buf) or_return
-	return flush(internal.sock, send_buf)
+	_send_str(internal, "\n\r\n") or_return
+	return flush(internal)
 }
 
 end_sse :: end_chunked
 
 @(private)
-_send_str :: #force_inline proc(
-	sock: nbio.TCP_Socket,
-	text: string,
-	send_buf: ^cb.Circular_Buffer,
-) -> (
-	ok: bool,
-) {
-	return _send_buf(sock, transmute([]u8)(text), send_buf)
+_send_str :: #force_inline proc(internal: ^Response_Internal, text: string) -> (ok: bool) {
+	return _send_buf(internal, transmute([]u8)(text))
 }
 
 @(private)
-_send_buf :: proc(sock: nbio.TCP_Socket, buf: []u8, send_buf: ^cb.Circular_Buffer) -> (ok: bool) {
+_send_buf :: proc(internal: ^Response_Internal, buf: []u8) -> (ok: bool) {
 	remaining := buf
 	for len(remaining) > 0 {
-		send_len := min(len(remaining), send_buf.wa)
+		send_len := min(len(remaining), internal.send_buf.wa)
 		if send_len > 0 {
-			cb.write(send_buf, remaining[:send_len])
+			cb.write(&internal.send_buf, remaining[:send_len])
 			remaining = remaining[send_len:]
 		}
-		if len(remaining) > 0 do flush(sock, send_buf) or_return
+		if len(remaining) > 0 do flush(internal) or_return
 	}
 	return true
 }
 
 @(private)
-flush :: proc(sock: net.TCP_Socket, send_buf: ^cb.Circular_Buffer) -> (ok: bool) {
+flush :: proc(internal: ^Response_Internal) -> (ok: bool) {
 	for {
-		buf := cb.peek_read(send_buf)
+		buf := cb.peek_read(&internal.send_buf)
 		if len(buf) == 0 do break
-		n, err := io.send(sock, {buf})
+		n, err := io.send(internal.sock, {buf})
 		if err != nil || n <= 0 do return false
-		cb.commit_read(send_buf, n)
+		cb.commit_read(&internal.send_buf, n)
 	}
 	return true
 }
