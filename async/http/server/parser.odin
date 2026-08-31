@@ -1,9 +1,11 @@
 package async_http_server
 
-import cb "../../circular_buffer"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
+
+import cb "../../circular_buffer"
+import "headers"
 
 State :: enum {
 	Request_Line,
@@ -46,14 +48,12 @@ parser_destroy_request :: proc(req: ^Request) {
 	self := (^Parser)(req.internal)
 	if self.state == .Request_Line do return
 
-	// delete(req.method)
 	delete(req.uri)
 	delete(req.version)
 
-	for k, v in req.headers {
-		delete_key(&req.headers, k)
-		delete(k)
-		delete(v)
+	for header in req.headers {
+		delete(header.key)
+		delete(header.value)
 	}
 	delete(req.headers)
 }
@@ -108,7 +108,7 @@ parser_parse :: proc(self: ^Parser) -> Parse_Result {
 				key := strings.clone(strings.trim_space(line[:idx]))
 				val := strings.clone(strings.trim_space(line[idx + 1:]))
 
-				self.req.headers[key] = val
+				headers.add(&self.req.headers, key, val)
 
 				if strings.equal_fold(key, "Content-Length") {
 					val_int, ok := strconv.parse_int(val)

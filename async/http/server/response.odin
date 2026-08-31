@@ -9,6 +9,7 @@ import "core:strings"
 
 import cb "../../circular_buffer"
 import "../../io"
+import "headers"
 
 @(private)
 Response_Internal :: struct {
@@ -92,7 +93,7 @@ send_file :: proc(req: ^Request, res: ^Response, file_path: string) -> (ok: bool
 	offset: int = 0
 	length: int = int(size)
 
-	if range_header, has_range := req.headers["Range"]; has_range {
+	if range_header, has_range := headers.get(&req.headers, "Range"); has_range {
 		start, end, valid := parse_range_header(range_header, int(size))
 		if valid {
 			res.status = .Partial_Content

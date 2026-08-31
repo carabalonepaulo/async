@@ -7,6 +7,7 @@ import "core:strings"
 
 import cb "../../circular_buffer"
 import "../../io"
+import "headers"
 
 Method :: enum {
 	Get,
@@ -24,7 +25,8 @@ Request :: struct {
 	method:         Method,
 	uri:            string,
 	version:        string,
-	headers:        map[string]string,
+	headers:        headers.Headers,
+	// headers:        map[string]string,
 	content_length: int,
 	//
 	socket:         nbio.TCP_Socket,
