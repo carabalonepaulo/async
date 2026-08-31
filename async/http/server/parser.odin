@@ -31,7 +31,7 @@ parser_init :: proc(self: ^Parser, buf: []u8, line_buf: []u8) {
 parser_reset :: proc(self: ^Parser) {
 	parser_destroy_request(&self.req)
 
-	self.req.method = ""
+	self.req.method = .Get
 	self.req.uri = ""
 	self.req.version = ""
 	self.req.headers = nil
@@ -46,7 +46,7 @@ parser_destroy_request :: proc(req: ^Request) {
 	self := (^Parser)(req.internal)
 	if self.state == .Request_Line do return
 
-	delete(req.method)
+	// delete(req.method)
 	delete(req.uri)
 	delete(req.version)
 
@@ -66,29 +66,42 @@ parser_commit_write :: proc(self: ^Parser, n: int) {
 	cb.commit_write(&self.buf, n)
 }
 
-parser_parse :: proc(self: ^Parser) -> (finished: bool, ok: bool) {
+Parse_Result :: enum {
+	Partial,
+	Done,
+	//
+	Invalid_Method,
+	Invalid_HTTP_Version,
+	Invalid_Request_Line,
+	Invalid_Content_Length,
+}
+
+parser_parse :: proc(self: ^Parser) -> Parse_Result {
 	for {
 		switch self.state {
 		case .Request_Line:
 			line, ok := parser_read_line(self)
-			if !ok do return false, true
+			if !ok do return .Partial
 
 			parts := strings.split(line, " ", context.temp_allocator)
-			if len(parts) != 3 do return false, false
+			if len(parts) != 3 do return .Invalid_Request_Line
 
-			self.req.method = strings.clone(parts[0])
+			method, method_ok := parse_method(parts[0])
+			if !method_ok do return .Invalid_Method
+
+			self.req.method = method
 			self.req.uri = strings.clone(parts[1])
 			self.req.version = strings.clone(parts[2])
 
 			self.state = .Headers
 		case .Headers:
 			line, ok := parser_read_line(self)
-			if !ok do return false, true
+			if !ok do return .Partial
 
 			if line == "" {
 				self.remaining_bytes = self.req.content_length
 				self.state = .Body
-				return true, true
+				return .Done
 			}
 
 			if idx := strings.index(line, ":"); idx != -1 {
@@ -99,12 +112,12 @@ parser_parse :: proc(self: ^Parser) -> (finished: bool, ok: bool) {
 
 				if strings.equal_fold(key, "Content-Length") {
 					val_int, ok := strconv.parse_int(val)
-					if !ok do return false, false
+					if !ok do return .Invalid_Content_Length
 					self.req.content_length = val_int
 				}
 			}
 		case .Body:
-			return true, true
+			return .Done
 		}
 	}
 }
@@ -119,6 +132,30 @@ parser_read_line :: proc(self: ^Parser) -> (line: string, ok: bool) {
 	cb.read(&self.buf, dst) or_return
 
 	return transmute(string)(dst[:idx]), true
+}
+
+@(private)
+parse_method :: proc(method: string) -> (Method, bool) {
+	switch strings.to_lower(method, allocator = context.temp_allocator) {
+	case "get":
+		return .Get, true
+	case "head":
+		return .Head, true
+	case "post":
+		return .Post, true
+	case "delete":
+		return .Delete, true
+	case "connect":
+		return .Connect, true
+	case "options":
+		return .Options, true
+	case "trace":
+		return .Trace, true
+	case "patch":
+		return .Patch, true
+	case:
+		return .Get, false
+	}
 }
 
 @(test)

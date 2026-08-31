@@ -149,14 +149,32 @@ begin_receive :: proc(state: Receive_State) {
 
 		parser_commit_write(&parser, n)
 
-		completed, ok := parser_parse(&parser)
-		if !ok {
+		parse_result := parser_parse(&parser)
+		#partial switch parse_result {
+		case .Partial:
+			continue
+		case .Invalid_Method:
+			res.status = .Not_Implemented
+			send_headers(&res)
+			break
+		case .Invalid_HTTP_Version:
+			res.status = .HTTP_Version_Not_Supported
+			send_headers(&res)
+			break
+		case .Invalid_Request_Line, .Invalid_Content_Length:
 			res.status = .Bad_Request
 			send_headers(&res)
 			break
+
 		}
 
-		if !completed do continue
+		// if !ok {
+		// 	res.status = .Bad_Request
+		// 	send_headers(&res)
+		// 	break
+		// }
+
+		// if !completed do continue
 
 		response_reset(&res)
 

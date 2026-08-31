@@ -1,5 +1,6 @@
 package async_http_server
 
+import "core:encoding/json"
 import "core:nbio"
 import "core:net"
 import "core:strings"
@@ -7,8 +8,21 @@ import "core:strings"
 import cb "../../circular_buffer"
 import "../../io"
 
+Method :: enum {
+	Get,
+	Head,
+	Post,
+	Put,
+	Delete,
+	Connect,
+	Options,
+	Trace,
+	Patch,
+}
+
 Request :: struct {
-	method:         string,
+	method:         Method,
+	// method:         string,
 	uri:            string,
 	version:        string,
 	headers:        map[string]string,

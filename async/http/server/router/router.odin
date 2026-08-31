@@ -16,7 +16,8 @@ Context :: struct {
 Handler :: proc(ctx: ^Context) -> bool
 
 Route :: struct {
-	method:   string,
+	method:   server.Method,
+	// method:   string,
 	path:     string,
 	handlers: [dynamic]Handler,
 }
@@ -87,7 +88,7 @@ dispatch :: proc(ud: rawptr, req: ^server.Request, res: ^server.Response) -> boo
 
 post :: proc(router: ^Router, path: string, handler: Handler, mws: ..Handler) {
 	route := Route {
-		method = "POST",
+		method = .Post,
 		path   = path,
 	}
 
@@ -98,7 +99,7 @@ post :: proc(router: ^Router, path: string, handler: Handler, mws: ..Handler) {
 
 get :: proc(router: ^Router, path: string, handler: Handler, mws: ..Handler) {
 	route := Route {
-		method = "GET",
+		method = .Get,
 		path   = path,
 	}
 
