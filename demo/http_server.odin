@@ -1,14 +1,12 @@
 package main
 
-import "core:encoding/json"
 import "core:fmt"
-import "core:os"
-import "core:strings"
 import "core:sys/windows"
 import "core:time"
 
 import "../async"
 import http "../async/http/server"
+import "../async/http/server/headers"
 import "../async/http/server/router"
 import "../async/io"
 
@@ -67,16 +65,12 @@ http_server_demo :: proc() {
 		http.begin_sse(ctx.res) or_return
 		defer http.end_sse(ctx.res)
 
+		if ctx.req.method == .Head do return true
+
 		for i in 0 ..< 5 {
 			msg := fmt.tprintf("message #%d", i)
-
-			http.send_sse(
-				ctx.res,
-				data = transmute([]u8)(msg),
-				event = "ping",
-				id = fmt.tprintf("%d", i),
-			) or_return
-
+			id := fmt.tprintf("%d", i)
+			http.send_sse(ctx.res, transmute([]u8)(msg), "ping", id) or_return
 			async.sleep(time.Second)
 		}
 
@@ -84,10 +78,12 @@ http_server_demo :: proc() {
 	})
 
 	router.get(&r, "/chunked", proc(ctx: ^router.Context) -> bool {
-		ctx.res.headers["Content-Type"] = "text/plain; charset=utf-8"
+		headers.add(&ctx.res.headers, "Content-Type", "text/plain; charset=utf-8", .Replace)
 
 		http.begin_chunked(ctx.res, .Ok) or_return
 		defer http.end_chunked(ctx.res)
+
+		if ctx.req.method == .Head do return true
 
 		for i in 0 ..< 5 {
 			msg := fmt.tprintf("chunk #%d\n", i)
@@ -103,7 +99,6 @@ http_server_demo :: proc() {
 	})
 
 	router.get(&r, "/", proc(ctx: ^router.Context) -> bool {
-		ctx.res.headers["Content-Type"] = "text/plain; charset=utf-8"
 		return http.send_text(ctx.res, .Ok, "hello, world!")
 	})
 

@@ -22,7 +22,7 @@ Response_Internal :: struct {
 
 Response :: struct {
 	status:   Status,
-	headers:  map[string]string,
+	headers:  headers.Headers,
 	internal: rawptr,
 }
 
@@ -48,11 +48,13 @@ send_headers :: proc(res: ^Response) -> (ok: bool) {
 	)
 	_send_buf(internal, transmute([]u8)(line)) or_return
 
-	res.headers["Connection"] = "keep-alive"
+	headers.add(&res.headers, "Connection", "keep-alive")
 
-	for k, v in res.headers {
-		line = fmt.bprintf(line_buf, "%s: %s\r\n", k, v)
-		_send_buf(internal, transmute([]u8)(line)) or_return
+	for &h in res.headers {
+		_send_str(internal, h.key) or_return
+		_send_str(internal, ": ") or_return
+		_send_str(internal, h.value) or_return
+		_send_buf(internal, {'\r', '\n'}) or_return
 	}
 
 	_send_buf(internal, {'\r', '\n'}) or_return
@@ -63,7 +65,7 @@ send :: proc(res: ^Response, buf: []u8) -> (ok: bool) {
 	internal := (^Response_Internal)(res.internal)
 	send_buf := &internal.send_buf
 
-	res.headers["Content-Length"] = fmt.tprint(len(buf))
+	headers.add(&res.headers, "Content-Length", fmt.tprint(len(buf)), .Replace)
 	send_headers(res) or_return
 
 	if internal.method != .Head do _send_buf(internal, buf) or_return
@@ -71,7 +73,7 @@ send :: proc(res: ^Response, buf: []u8) -> (ok: bool) {
 }
 
 send_text :: proc(res: ^Response, status: Status, text: string) -> (ok: bool) {
-	res.headers["Content-Type"] = "text/plain; charset=utf-8"
+	headers.add(&res.headers, "Content-Type", "text/plain; charset=utf-8")
 	res.status = status
 	return send(res, transmute([]u8)(text))
 }
@@ -85,10 +87,9 @@ send_file :: proc(req: ^Request, res: ^Response, file_path: string) -> (ok: bool
 	type, size, stat_err := io.stat(file)
 	if stat_err != nil || type != .Regular do return send_text(res, .Internal_Server_Error, "")
 
-	if "Content-Type" not_in res.headers {
-		res.headers["Content-Type"] = get_mime_type_from_path(internal.mime_types, file_path)
-	}
-	res.headers["Accept-Ranges"] = "bytes"
+	mime := get_mime_type_from_path(internal.mime_types, file_path)
+	headers.add(&res.headers, "Content-Type", mime, .If_Absent)
+	headers.add(&res.headers, "Accept-Ranges", "bytes")
 
 	offset: int = 0
 	length: int = int(size)
@@ -99,16 +100,17 @@ send_file :: proc(req: ^Request, res: ^Response, file_path: string) -> (ok: bool
 			res.status = .Partial_Content
 			offset = start
 			length = (end - start) + 1
-			res.headers["Content-Range"] = fmt.tprintf("bytes %d-%d/%d", start, end, size)
+			range := fmt.tprintf("bytes %d-%d/%d", start, end, size)
+			headers.add(&res.headers, "Content-Range", range)
 		} else {
 			res.status = .Range_Not_Satisfiable
-			res.headers["Content-Range"] = fmt.tprintf("bytes */%d", size)
-			res.headers["Content-Length"] = "0"
+			headers.add(&res.headers, "Content-Range", fmt.tprintf("bytes */%d", size))
+			headers.add(&res.headers, "Content-Length", "0", .Replace)
 			return send_headers(res)
 		}
 	}
 
-	res.headers["Content-Length"] = fmt.tprint(length)
+	headers.add(&res.headers, "Content-Length", fmt.tprint(length), .Replace)
 	send_headers(res) or_return
 
 	if internal.method != .Head {
@@ -123,18 +125,18 @@ send_json :: proc(res: ^Response, value: $T) -> (ok: bool) {
 	buf, json_err := json.marshal(value, allocator = context.temp_allocator)
 	if json_err != nil {
 		res.status = .Internal_Server_Error
-		res.headers["Content-Length"] = "0"
+		headers.add(&res.headers, "Content-Length", "0", .Replace)
 		return send_headers(res)
 	}
 
-	res.headers["Content-Type"] = "application/json"
+	headers.add(&res.headers, "Content-Type", "application/json")
 	return send(res, buf)
 }
 
 begin_chunked :: proc(res: ^Response, status: Status = .Ok) -> (ok: bool) {
 	res.status = status
-	res.headers["Transfer-Encoding"] = "chunked"
-	delete_key(&res.headers, "Content-Length")
+	headers.add(&res.headers, "Transfer-Encoding", "chunked")
+	headers.delete(&res.headers, "Content-Length")
 	return send_headers(res)
 }
 
@@ -160,11 +162,11 @@ end_chunked :: proc(res: ^Response) -> (ok: bool) {
 	return flush(internal)
 }
 
-begin_sse :: proc(res: ^Response) -> (ok: bool) {
-	res.headers["Content-Type"] = "text/event-stream"
-	res.headers["Cache-Control"] = "no-cache"
-	res.headers["Connection"] = "keep-alive"
-	return begin_chunked(res, .Ok)
+begin_sse :: proc(res: ^Response, status: Status = .Ok) -> (ok: bool) {
+	headers.add(&res.headers, "Content-Type", "text/event-stream")
+	headers.add(&res.headers, "Cache-Control", "no-cache")
+	headers.add(&res.headers, "Connection", "keep-alive")
+	return begin_chunked(res, status)
 }
 
 send_sse :: proc(
@@ -185,9 +187,13 @@ send_sse :: proc(
 	payload_len := 0
 	retry_digits := count_decimal_digits(retry)
 
-	if retry > 0 do payload_len += 7 + retry_digits + 1
-	if len(id) > 0 do payload_len += 4 + len(id) + 1
-	if len(event) > 0 do payload_len += 7 + len(event) + 1
+	RETRY_LEN :: len("retry: \n")
+	ID_LEN :: len("id: \n")
+	EVENT_LEN :: len("event: \n")
+
+	if retry > 0 do payload_len += RETRY_LEN + retry_digits
+	if len(id) > 0 do payload_len += ID_LEN + len(id)
+	if len(event) > 0 do payload_len += EVENT_LEN + len(event)
 
 	if len(data) > 0 {
 		remaining := data
@@ -208,9 +214,9 @@ send_sse :: proc(
 	if payload_len == 1 do return true
 	_send_fmt(internal, count_hex_digits(payload_len) + 2, "%x\r\n", payload_len) or_return
 
-	if retry > 0 do _send_fmt(internal, len("retry: \n") + retry_digits, "retry: %d\n", retry) or_return
-	if len(id) > 0 do _send_fmt(internal, len("id: \n") + len(id), "id: %s\n", id) or_return
-	if len(event) > 0 do _send_fmt(internal, len("event: \n") + len(event), "event: %s\n", event) or_return
+	if retry > 0 do _send_fmt(internal, RETRY_LEN + retry_digits, "retry: %d\n", retry) or_return
+	if len(id) > 0 do _send_fmt(internal, ID_LEN + len(id), "id: %s\n", id) or_return
+	if len(event) > 0 do _send_fmt(internal, EVENT_LEN + len(event), "event: %s\n", event) or_return
 
 	if len(data) > 0 {
 		remaining := data

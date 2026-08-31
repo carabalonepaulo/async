@@ -9,6 +9,7 @@ import "../.."
 import cb "../../circular_buffer"
 import "../../io"
 import "../../storage"
+import "headers"
 
 REQUEST_BUFFER_SIZE :: #config(HTTP_SERVER_REQUEST_SIZE, 4 * mem.Kilobyte)
 RESPONSE_BUFFER_SIZE :: #config(HTTP_SERVER_RESPONSE_SIZE, 4 * mem.Kilobyte)
@@ -122,7 +123,7 @@ begin_receive :: proc(state: Receive_State) {
 
 	res: Response
 	res.internal = &res_internal
-	res.headers = make(map[string]string)
+	res.headers = headers.Headers(make([dynamic]headers.Header))
 	defer delete(res.headers)
 
 	temp_arena: mem.Arena
@@ -140,8 +141,7 @@ begin_receive :: proc(state: Receive_State) {
 			case .Body:
 				res.status = .Bad_Request
 			}
-			send_headers(&res)
-			break
+			fail(&res) or_break
 		}
 
 		n, err := io.recv(state.sock, {write_slice})
@@ -154,18 +154,11 @@ begin_receive :: proc(state: Receive_State) {
 		case .Partial:
 			continue
 		case .Invalid_Method:
-			res.status = .Not_Implemented
-			send_headers(&res)
-			break
+			fail(&res, .Not_Implemented) or_break
 		case .Invalid_HTTP_Version:
-			res.status = .HTTP_Version_Not_Supported
-			send_headers(&res)
-			break
+			fail(&res, .HTTP_Version_Not_Supported) or_break
 		case .Invalid_Request_Line, .Invalid_Content_Length:
-			res.status = .Bad_Request
-			send_headers(&res)
-			break
-
+			fail(&res, .Bad_Request) or_break
 		}
 
 		response_reset(&res)
@@ -180,5 +173,13 @@ begin_receive :: proc(state: Receive_State) {
 			if ok := state.server.request_handler(state.server.state, &parser.req, &res); !ok do break
 		}
 	}
+}
+
+@(private)
+fail :: proc(res: ^Response, status: Maybe(Status) = nil) -> bool {
+	if status, ok := status.(Status); ok do res.status = status
+	headers.add(&res.headers, "Content-Length", "0")
+	send_headers(res)
+	return false
 }
 

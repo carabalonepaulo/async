@@ -26,7 +26,6 @@ Request :: struct {
 	uri:            string,
 	version:        string,
 	headers:        headers.Headers,
-	// headers:        map[string]string,
 	content_length: int,
 	//
 	socket:         nbio.TCP_Socket,
