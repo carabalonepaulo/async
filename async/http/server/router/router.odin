@@ -62,6 +62,15 @@ dispatch :: proc(ud: rawptr, req: ^server.Request, res: ^server.Response) -> boo
 		}
 	}
 
+	if target_route == nil && req.method == .Head {
+		for &route in router.routes {
+			if route.method == .Get && route.path == req.uri {
+				target_route = &route
+				break
+			}
+		}
+	}
+
 	pipeline := make([dynamic]Handler, context.temp_allocator)
 	for mw in router.handlers do append(&pipeline, mw)
 

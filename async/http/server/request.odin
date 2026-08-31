@@ -22,7 +22,6 @@ Method :: enum {
 
 Request :: struct {
 	method:         Method,
-	// method:         string,
 	uri:            string,
 	version:        string,
 	headers:        map[string]string,

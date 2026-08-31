@@ -168,15 +168,8 @@ begin_receive :: proc(state: Receive_State) {
 
 		}
 
-		// if !ok {
-		// 	res.status = .Bad_Request
-		// 	send_headers(&res)
-		// 	break
-		// }
-
-		// if !completed do continue
-
 		response_reset(&res)
+		(^Response_Internal)(res.internal).method = parser.req.method
 
 		{
 			defer {

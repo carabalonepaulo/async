@@ -16,6 +16,7 @@ Response_Internal :: struct {
 	send_buf:   cb.Circular_Buffer,
 	line_buf:   []u8,
 	mime_types: ^map[string]string,
+	method:     Method,
 }
 
 Response :: struct {
@@ -64,10 +65,8 @@ send :: proc(res: ^Response, buf: []u8) -> (ok: bool) {
 	res.headers["Content-Length"] = fmt.tprint(len(buf))
 	send_headers(res) or_return
 
-	_send_buf(internal, buf) or_return
-
-	if send_buf.ra > 0 do flush(internal) or_return
-	return true
+	if internal.method != .Head do _send_buf(internal, buf) or_return
+	return flush(internal)
 }
 
 send_text :: proc(res: ^Response, status: Status, text: string) -> (ok: bool) {
@@ -111,8 +110,10 @@ send_file :: proc(req: ^Request, res: ^Response, file_path: string) -> (ok: bool
 	res.headers["Content-Length"] = fmt.tprint(length)
 	send_headers(res) or_return
 
-	cb :: proc(op: ^nbio.Operation) {nbio.close(op.sendfile.file)}
-	nbio.sendfile(internal.sock, file, cb, offset, length)
+	if internal.method != .Head {
+		cb :: proc(op: ^nbio.Operation) {nbio.close(op.sendfile.file)}
+		nbio.sendfile(internal.sock, file, cb, offset, length)
+	}
 
 	return true
 }
@@ -133,8 +134,7 @@ begin_chunked :: proc(res: ^Response, status: Status = .Ok) -> (ok: bool) {
 	res.status = status
 	res.headers["Transfer-Encoding"] = "chunked"
 	delete_key(&res.headers, "Content-Length")
-	send_headers(res) or_return
-	return true
+	return send_headers(res)
 }
 
 send_chunk :: proc(res: ^Response, buf: []u8) -> (ok: bool) {
@@ -142,6 +142,7 @@ send_chunk :: proc(res: ^Response, buf: []u8) -> (ok: bool) {
 
 	internal := (^Response_Internal)(res.internal)
 	line_buf := internal.line_buf
+	if internal.method == .Head do return true
 
 	_send_fmt(internal, count_hex_digits(len(buf)) + 2, "%x\r\n", len(buf)) or_return
 	_send_buf(internal, buf) or_return
@@ -153,6 +154,7 @@ send_chunk :: proc(res: ^Response, buf: []u8) -> (ok: bool) {
 end_chunked :: proc(res: ^Response) -> (ok: bool) {
 	internal := (^Response_Internal)(res.internal)
 	send_buf := &internal.send_buf
+	if internal.method == .Head do return true
 	_send_buf(internal, {'0', '\r', '\n', '\r', '\n'}) or_return
 	return flush(internal)
 }
@@ -176,6 +178,8 @@ send_sse :: proc(
 	internal := (^Response_Internal)(res.internal)
 	send_buf := &internal.send_buf
 	line_buf := internal.line_buf
+
+	if internal.method == .Head do return true
 
 	payload_len := 0
 	retry_digits := count_decimal_digits(retry)
