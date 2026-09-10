@@ -225,6 +225,11 @@ sleep :: proc(n: time.Duration) {
 	yield()
 }
 
+sleep_or_cancel :: proc(n: time.Duration, cancel: Cancellation_Token) -> (ok: bool) {
+	idx := select({branch(cancel)}, timeout = n)
+	return idx == -1
+}
+
 reschedule :: #force_inline proc() {
 	wake(get_handle())
 	yield()
