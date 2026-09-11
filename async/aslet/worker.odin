@@ -1,4 +1,4 @@
-package aslet
+package async_aslet
 
 import "core:sync/chan"
 import "hl"

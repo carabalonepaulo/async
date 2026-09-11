@@ -1,4 +1,4 @@
-package coro
+package async_coro
 
 import "core:c"
 import "core:strings"

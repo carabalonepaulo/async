@@ -1,4 +1,4 @@
-package aslet
+package async_aslet
 
 import "base:runtime"
 import "core:strings"

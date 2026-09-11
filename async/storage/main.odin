@@ -1,4 +1,4 @@
-package storage
+package async_storage
 
 INDEX_BITS :: 32
 INDEX_MASK :: (1 << INDEX_BITS) - 1

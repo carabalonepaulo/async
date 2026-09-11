@@ -1,4 +1,4 @@
-package sqlite3
+package async_sqlite3
 
 // copied from https://github.com/saenai255/odin-sqlite3
 

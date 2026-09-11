@@ -1,4 +1,4 @@
-package storage
+package async_storage
 
 Vacant_Entry :: struct($T: typeid) {
 	owner: ^Storage(T),
