@@ -8,7 +8,6 @@ import "core:time"
 import "coro"
 import "storage"
 
-@(private)
 Case :: struct {
 	ch_id:      u64,
 	ch:         rawptr,
