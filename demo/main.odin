@@ -33,6 +33,7 @@ main :: proc() {
 	io.init()
 	defer io.deinit()
 
+	join_demo()
 	// sqlite_demo()
 	// http_server_demo()
 	sock_demo()

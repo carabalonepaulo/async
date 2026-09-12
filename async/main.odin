@@ -32,6 +32,7 @@ Internal_State :: struct {
 	queued:    bool,
 	allocator: mem.Allocator,
 	ud:        [MAX_USER_DATA]rawptr,
+	waiter:    Maybe(Handle),
 }
 
 Handle :: distinct u64
@@ -177,6 +178,7 @@ spawn_with_data :: proc(
 		ud := (^Internal_State)(coro.get_user_data(co))
 		context = ud.ctx
 		((proc(arg: T))(ud.fn))(pop(T))
+		if waiter, ok := ud.waiter.(Handle); ok do wake(waiter)
 	}
 
 	desc := create_desc(raw_fn, ud, stack_size, storage_size)
@@ -199,6 +201,7 @@ spawn_without_data :: proc(
 		ud := (^Internal_State)(coro.get_user_data(co))
 		context = ud.ctx
 		((proc())(ud.fn))()
+		if waiter, ok := ud.waiter.(Handle); ok do wake(waiter)
 	}
 
 	desc := create_desc(raw_fn, ud, stack_size, storage_size)
@@ -206,6 +209,14 @@ spawn_without_data :: proc(
 	queue.enqueue(&scheduler.ready, ud.id)
 
 	return Handle(ud.id)
+}
+
+join :: proc(handle: Handle) {
+	state, ok := storage.get(&scheduler.slots, u64(handle))
+	if !ok do return
+	assert(state.waiter == nil, "multiple join calls on the same handle")
+	state.waiter = get_handle()
+	yield()
 }
 
 next_tick :: proc(fn: proc(ud: rawptr), ud: rawptr = nil) {
