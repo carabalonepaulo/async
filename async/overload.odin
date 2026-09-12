@@ -32,7 +32,11 @@ recv :: proc {
 }
 
 spawn :: proc {
-	spawn_with_data,
+	spawn_with_poly,
+	spawn_with_poly2,
+	spawn_with_poly3,
+	spawn_with_poly4,
+	spawn_with_poly5,
 	spawn_without_data,
 }
 
@@ -64,3 +68,4 @@ into_rawptr :: proc {
 	cancel_token_into_rawptr,
 	signal_into_rawptr,
 }
+

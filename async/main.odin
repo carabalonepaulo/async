@@ -14,6 +14,9 @@ import tw "time_wheel"
 INITIAL_CAPACITY :: #config(ASYNC_INITIAL_CAPACITY, 1024)
 MAX_USER_DATA :: #config(ASYNC_MAX_USER_DATA, 5)
 
+DEFAULT_STACK_SIZE :: #config(ASYNC_DEFAULT_STACK_SIZE, 64 * mem.Kilobyte)
+DEFAULT_STORAGE_SIZE :: #config(ASYNC_DEFAULT_STORAGE_SIZE, 256)
+
 Next_Tick :: struct {
 	ud: rawptr,
 	fn: proc(ud: rawptr),
@@ -162,53 +165,6 @@ poll :: proc() {
 		}
 	}
 	runtime.clear(&scheduler.finished)
-}
-
-spawn_with_data :: proc(
-	arg: $T,
-	fn: proc(arg: T),
-	stack_size: uint = 64 * mem.Kilobyte,
-	storage_size: uint = 256,
-	stack_allocator := context.allocator,
-) -> Handle {
-	arg := arg
-
-	ud := create_ud(rawptr(fn), stack_allocator)
-	raw_fn := proc "c" (co: ^coro.Coro) {
-		ud := (^Internal_State)(coro.get_user_data(co))
-		context = ud.ctx
-		((proc(arg: T))(ud.fn))(pop(T))
-		if waiter, ok := ud.waiter.(Handle); ok do wake(waiter)
-	}
-
-	desc := create_desc(raw_fn, ud, stack_size, storage_size)
-	coro.check(coro.create(&ud.co, &desc))
-	coro.push(ud.co, &arg, size_of(T))
-
-	queue.enqueue(&scheduler.ready, ud.id)
-
-	return Handle(ud.id)
-}
-
-spawn_without_data :: proc(
-	fn: proc(),
-	stack_size: uint = 64 * mem.Kilobyte,
-	storage_size: uint = 256,
-	stack_allocator := context.allocator,
-) -> Handle {
-	ud := create_ud(rawptr(fn), stack_allocator)
-	raw_fn := proc "c" (co: ^coro.Coro) {
-		ud := (^Internal_State)(coro.get_user_data(co))
-		context = ud.ctx
-		((proc())(ud.fn))()
-		if waiter, ok := ud.waiter.(Handle); ok do wake(waiter)
-	}
-
-	desc := create_desc(raw_fn, ud, stack_size, storage_size)
-	coro.check(coro.create(&ud.co, &desc))
-	queue.enqueue(&scheduler.ready, ud.id)
-
-	return Handle(ud.id)
 }
 
 join :: proc(handle: Handle) {
