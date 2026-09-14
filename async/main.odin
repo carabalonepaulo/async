@@ -145,9 +145,7 @@ poll :: proc() {
 	ready_count := queue.len(scheduler.ready)
 	for _ in 0 ..< ready_count {
 		task_id := queue.pop_front(&scheduler.ready)
-		ud, ok := storage.get(&scheduler.slots, task_id)
-		assert(ok, "invalid task")
-
+		ud := storage.get(&scheduler.slots, task_id) or_continue
 		ud.queued = false
 		coro.check(coro.resume(ud.co))
 
@@ -213,8 +211,7 @@ sleep :: proc(n: time.Duration) {
 }
 
 sleep_or_cancel :: proc(n: time.Duration, cancel: Cancellation_Token) -> (ok: bool) {
-	idx := select({branch(cancel)}, timeout = n)
-	return idx == -1
+	return select({branch(cancel)}, timeout = n) == -1
 }
 
 reschedule :: #force_inline proc() {

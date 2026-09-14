@@ -16,7 +16,7 @@ create_wait_group :: proc() -> Wait_Group {
 	return Wait_Group(id)
 }
 
-destroy_wait_group :: proc(self: Wait_Group) {
+wait_group_destroy :: proc(self: Wait_Group) {
 	state := get_inner(self)
 	assert(state.waiter == nil && state.count == 0, "destroying active wait group")
 

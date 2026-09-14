@@ -11,7 +11,8 @@ deinit :: proc {
 destroy :: proc {
 	chan_destroy,
 	signal_destroy,
-	destroy_wait_group,
+	wait_group_destroy,
+	semaphore_destroy,
 }
 
 try_send :: proc {
