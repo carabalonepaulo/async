@@ -34,7 +34,7 @@ cancel_after :: proc(self: Cancellation_Token, duration: time.Duration) {
 		}, transmute(rawptr)(self.id))
 }
 
-wait :: proc(self: Cancellation_Token) {
+cancel_token_wait :: proc(self: Cancellation_Token) {
 	select({branch(self)})
 }
 

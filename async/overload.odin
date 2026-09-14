@@ -11,6 +11,7 @@ deinit :: proc {
 destroy :: proc {
 	chan_destroy,
 	signal_destroy,
+	destroy_wait_group,
 }
 
 try_send :: proc {
@@ -67,5 +68,10 @@ into_rawptr :: proc {
 	chan_into_rawptr,
 	cancel_token_into_rawptr,
 	signal_into_rawptr,
+}
+
+wait :: proc {
+	cancel_token_wait,
+	wait_group_wait,
 }
 

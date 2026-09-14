@@ -42,8 +42,6 @@ Chan :: struct($T: typeid) {
 	_marker: [0]T,
 }
 
-Chan_Handle :: distinct u64
-
 create_chan :: proc($T: typeid, cap := 16) -> Chan(T) {
 	inner := new(Inner_Chan(T))
 	queue.init(&inner.receivers, 1)

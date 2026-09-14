@@ -4,6 +4,7 @@ import "base:builtin"
 import "base:runtime"
 import "core:c"
 import "core:container/queue"
+import "core:fmt"
 import "core:mem"
 import "core:time"
 
@@ -17,14 +18,13 @@ MAX_USER_DATA :: #config(ASYNC_MAX_USER_DATA, 5)
 DEFAULT_STACK_SIZE :: #config(ASYNC_DEFAULT_STACK_SIZE, 64 * mem.Kilobyte)
 DEFAULT_STORAGE_SIZE :: #config(ASYNC_DEFAULT_STORAGE_SIZE, 256)
 
-Next_Tick :: struct {
-	ud: rawptr,
-	fn: proc(ud: rawptr),
+Hook :: enum {
+	Exit,
 }
 
-Timer :: struct {
-	fn: proc(ud: rawptr),
+Closure :: struct {
 	ud: rawptr,
+	fn: proc(ud: rawptr),
 }
 
 Internal_State :: struct {
@@ -35,7 +35,7 @@ Internal_State :: struct {
 	queued:    bool,
 	allocator: mem.Allocator,
 	ud:        [MAX_USER_DATA]rawptr,
-	waiter:    Maybe(Handle),
+	hooks:     [Hook]Closure,
 }
 
 Handle :: distinct u64
@@ -43,11 +43,7 @@ Handle :: distinct u64
 wake :: proc(self: Handle) {
 	ud, ok := storage.get(&scheduler.slots, u64(self))
 	assert(ok, "invalid task id")
-
-	if !ud.queued {
-		ud.queued = true
-		queue.enqueue(&scheduler.ready, u64(self))
-	}
+	queue.enqueue(&scheduler.ready, u64(self))
 }
 
 scheduler_send :: proc(self: Handle, value: $T) {
@@ -64,11 +60,12 @@ scheduler_send :: proc(self: Handle, value: $T) {
 }
 
 Scheduler :: struct {
-	next_tick:            queue.Queue(Next_Tick),
+	next_tick:            queue.Queue(Closure),
 	slots:                storage.Storage(^Internal_State),
 	ready:                queue.Queue(u64),
-	timers:               storage.Storage(Timer),
+	timers:               storage.Storage(Closure),
 	channels:             storage.Storage(rawptr),
+	wait_groups:          storage.Storage(Inner_Wait_Group),
 	active_cancel_tokens: map[u64]bool,
 	time_wheel:           tw.Time_Wheel,
 	finished:             [dynamic]tw.Task,
@@ -83,6 +80,7 @@ scheduler_init :: proc() {
 	queue.init(&scheduler.ready)
 	storage.init(&scheduler.timers, INITIAL_CAPACITY)
 	storage.init(&scheduler.channels, INITIAL_CAPACITY)
+	storage.init(&scheduler.wait_groups, INITIAL_CAPACITY)
 
 	scheduler.active_cancel_tokens = make(map[u64]bool)
 
@@ -106,6 +104,7 @@ scheduler_deinit :: proc() {
 	queue.destroy(&scheduler.ready)
 	storage.deinit(&scheduler.timers)
 	storage.deinit(&scheduler.channels)
+	storage.deinit(&scheduler.wait_groups)
 
 	tw.deinit(&scheduler.time_wheel)
 	delete(scheduler.finished)
@@ -141,7 +140,8 @@ poll :: proc() {
 		meta.fn(meta.ud)
 	}
 
-	for queue.len(scheduler.ready) > 0 {
+	ready_count := queue.len(scheduler.ready)
+	for _ in 0 ..< ready_count {
 		task_id := queue.pop_front(&scheduler.ready)
 		ud, ok := storage.get(&scheduler.slots, task_id)
 		assert(ok, "invalid task")
@@ -170,17 +170,35 @@ poll :: proc() {
 join :: proc(handle: Handle) {
 	state, ok := storage.get(&scheduler.slots, u64(handle))
 	if !ok do return
-	assert(state.waiter == nil, "multiple join calls on the same handle")
-	state.waiter = get_handle()
+	assert(state.hooks[.Exit].fn == nil, "multiple join calls on the same handle")
+	state.hooks[.Exit] = Closure {
+		ud = transmute(rawptr)(get_handle()),
+		fn = auto_cast proc(handle: Handle) {wake(handle)},
+	}
 	yield()
 }
 
+join_many :: proc(handles: []Handle) {
+	wg := create_wait_group()
+	defer destroy(wg)
+	for handle in handles {
+		state := storage.get(&scheduler.slots, u64(handle)) or_continue
+		assert(state.hooks[.Exit].fn == nil, "multiple join calls on the same handle")
+		state.hooks[.Exit] = Closure {
+			ud = transmute(rawptr)(wg),
+			fn = auto_cast proc(wg: Wait_Group) {done(wg)},
+		}
+		add(wg)
+	}
+	wait(wg)
+}
+
 next_tick :: proc(fn: proc(ud: rawptr), ud: rawptr = nil) {
-	queue.enqueue(&scheduler.next_tick, Next_Tick{ud, fn})
+	queue.enqueue(&scheduler.next_tick, Closure{ud, fn})
 }
 
 timer :: proc(n: time.Duration, fn: proc(ud: rawptr), ud: rawptr = nil) -> u64 {
-	id := storage.add(&scheduler.timers, Timer{fn, ud})
+	id := storage.add(&scheduler.timers, Closure{ud, fn})
 	tw.after(&scheduler.time_wheel, n, tw.Task(id))
 	return id
 }
@@ -311,5 +329,11 @@ handle_into_rawptr :: #force_inline proc(handle: Handle) -> rawptr {
 
 handle_from_rawptr :: #force_inline proc(ptr: rawptr) -> Handle {
 	return transmute(Handle)(ptr)
+}
+
+@(private)
+call_hook :: proc(state: ^Internal_State, hook: Hook) {
+	closure := state.hooks[hook]
+	if closure.fn != nil do closure.fn(closure.ud)
 }
 

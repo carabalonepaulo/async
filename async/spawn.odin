@@ -16,7 +16,7 @@ spawn_without_data :: proc(
 		ud := (^Internal_State)(coro.get_user_data(co))
 		context = ud.ctx
 		((proc())(ud.fn))()
-		if waiter, ok := ud.waiter.(Handle); ok do wake(waiter)
+		call_hook(ud, .Exit)
 	}
 	desc := create_desc(raw_fn, ud, stack_size, storage_size)
 	coro.check(coro.create(&ud.co, &desc))
@@ -45,7 +45,7 @@ spawn_with_poly :: proc(
 		coro.pop(ud.co, &a, size_of(A))
 
 		((proc(a: A))(ud.fn))(a)
-		if waiter, ok := ud.waiter.(Handle); ok do wake(waiter)
+		call_hook(ud, .Exit)
 	}
 
 	desc := create_desc(raw_fn, ud, stack_size, storage_size)
@@ -80,7 +80,7 @@ spawn_with_poly2 :: proc(
 		coro.pop(ud.co, &a, size_of(A))
 
 		((proc(a: A, b: B))(ud.fn))(a, b)
-		if waiter, ok := ud.waiter.(Handle); ok do wake(waiter)
+		call_hook(ud, .Exit)
 	}
 
 	desc := create_desc(raw_fn, ud, stack_size, storage_size)
@@ -124,7 +124,7 @@ spawn_with_poly3 :: proc(
 		coro.pop(ud.co, &a, size_of(A))
 
 		((proc(a: A, b: B, c: C))(ud.fn))(a, b, c)
-		if waiter, ok := ud.waiter.(Handle); ok do wake(waiter)
+		call_hook(ud, .Exit)
 	}
 
 	desc := create_desc(raw_fn, ud, stack_size, storage_size)
@@ -173,7 +173,7 @@ spawn_with_poly4 :: proc(
 		coro.pop(ud.co, &a, size_of(A))
 
 		((proc(a: A, b: B, c: C, d: D))(ud.fn))(a, b, c, d)
-		if waiter, ok := ud.waiter.(Handle); ok do wake(waiter)
+		call_hook(ud, .Exit)
 	}
 
 	desc := create_desc(raw_fn, ud, stack_size, storage_size)
@@ -227,7 +227,7 @@ spawn_with_poly5 :: proc(
 		coro.pop(ud.co, &a, size_of(A))
 
 		((proc(a: A, b: B, c: C, d: D, e: E))(ud.fn))(a, b, c, d, e)
-		if waiter, ok := ud.waiter.(Handle); ok do wake(waiter)
+		call_hook(ud, .Exit)
 	}
 
 	desc := create_desc(raw_fn, ud, stack_size, storage_size)

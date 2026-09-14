@@ -104,12 +104,12 @@ get :: proc(self: ^Storage($T), key: u64) -> (T, bool) {
 	idx, gen := unpack_key(key)
 
 	if idx >= u32(len(self.slots)) {
-		return nil, false
+		return {}, false
 	}
 
 	slot := &self.slots[idx]
 	if !slot.active || slot.gen != gen {
-		return nil, false
+		return {}, false
 	}
 
 	return slot.value, true
