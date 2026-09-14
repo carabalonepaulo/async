@@ -4,7 +4,6 @@ import "base:builtin"
 import "base:runtime"
 import "core:c"
 import "core:container/queue"
-import "core:fmt"
 import "core:mem"
 import "core:time"
 
@@ -18,15 +17,18 @@ MAX_USER_DATA :: #config(ASYNC_MAX_USER_DATA, 5)
 DEFAULT_STACK_SIZE :: #config(ASYNC_DEFAULT_STACK_SIZE, 64 * mem.Kilobyte)
 DEFAULT_STORAGE_SIZE :: #config(ASYNC_DEFAULT_STORAGE_SIZE, 256)
 
+@(private)
 Hook :: enum {
 	Exit,
 }
 
+@(private)
 Closure :: struct {
 	ud: rawptr,
 	fn: proc(ud: rawptr),
 }
 
+@(private)
 Internal_State :: struct {
 	ctx:       runtime.Context,
 	co:        ^coro.Coro,
