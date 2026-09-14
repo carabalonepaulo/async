@@ -54,6 +54,12 @@ run :: proc {
 	scheduler_run_with_poly,
 }
 
+block :: proc {
+	scheduler_block,
+	scheduler_block_with,
+	scheduler_block_with_poly,
+}
+
 get_user_data :: proc {
 	get_user_data_from_current,
 	get_user_data_from_handle,

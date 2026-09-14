@@ -135,6 +135,37 @@ scheduler_run_with_poly :: proc(arg: $T, tick: proc(arg: T), sleep: time.Duratio
 	}
 }
 
+scheduler_block :: proc(handle: Handle, sleep: time.Duration = 0) {
+	for {
+		storage.get_ptr(&scheduler.slots, u64(handle)) or_break
+		poll()
+		if sleep > 0 do time.sleep(sleep)
+	}
+}
+
+scheduler_block_with :: proc(handle: Handle, tick: proc(), sleep: time.Duration = 0) {
+	for {
+		storage.get_ptr(&scheduler.slots, u64(handle)) or_break
+		tick()
+		poll()
+		if sleep > 0 do time.sleep(sleep)
+	}
+}
+
+scheduler_block_with_poly :: proc(
+	handle: Handle,
+	a: $A,
+	tick: proc(a: A),
+	sleep: time.Duration = 0,
+) {
+	for {
+		storage.get_ptr(&scheduler.slots, u64(handle)) or_break
+		tick(a)
+		poll()
+		if sleep > 0 do time.sleep(sleep)
+	}
+}
+
 poll :: proc() {
 	len := queue.len(scheduler.next_tick)
 	for _ in 0 ..< len {
