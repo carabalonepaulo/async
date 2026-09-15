@@ -33,11 +33,11 @@ main :: proc() {
 	io.init()
 	defer io.deinit()
 
-	semaphore_demo()
+	// semaphore_demo()
 	// join_many_demo()
 	// join_demo()
 	// sqlite_demo()
-	// http_server_demo()
+	http_server_demo()
 	// sock_demo()
 	// fs_demo()
 	// signal_demo()

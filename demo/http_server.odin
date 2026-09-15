@@ -1,7 +1,6 @@
 package main
 
 import "core:fmt"
-import "core:sys/windows"
 import "core:time"
 
 import "../async"
@@ -14,15 +13,6 @@ running := true
 
 State :: struct {}
 
-ctrl_handler :: proc "stdcall" (ctrl_type: windows.DWORD) -> windows.BOOL {
-	switch ctrl_type {
-	case windows.CTRL_C_EVENT, windows.CTRL_BREAK_EVENT, windows.CTRL_CLOSE_EVENT:
-		running = false
-		return true
-	}
-	return false
-}
-
 logger :: proc(ctx: ^router.Context) -> (ok: bool) {
 	start := time.now()
 	router.next(ctx)
@@ -31,8 +21,6 @@ logger :: proc(ctx: ^router.Context) -> (ok: bool) {
 }
 
 http_server_demo :: proc() {
-	windows.SetConsoleCtrlHandler(ctrl_handler, true)
-
 	r: router.Router
 	router.init(&r)
 	defer router.deinit(&r)
@@ -98,6 +86,11 @@ http_server_demo :: proc() {
 		return http.send_file(ctx.req, ctx.res, file_path)
 	})
 
+	router.get(&r, "/shutdown", proc(ctx: ^router.Context) -> bool {
+		running = false
+		return http.send_text(ctx.res, .Ok, "")
+	})
+
 	router.get(&r, "/", proc(ctx: ^router.Context) -> bool {
 		return http.send_text(ctx.res, .Ok, "hello, world!")
 	})
@@ -112,26 +105,4 @@ http_server_demo :: proc() {
 		io.poll()
 	}
 }
-
-// on_request :: proc(state: ^State, req: ^http.Request, res: ^http.Response) {
-// 	fmt.printfln("[request] %v - %v", req.method, req.uri)
-
-// 	sb: strings.Builder
-// 	strings.builder_init(&sb)
-// 	defer strings.builder_destroy(&sb)
-
-// 	buf: [256]u8
-
-// 	for {
-// 		n, _ := http.read(req, buf[:])
-// 		if n == 0 do break
-// 		fmt.printfln("[chunk:%v] %v", len(buf), buf)
-
-// 		strings.write_bytes(&sb, buf[:n])
-// 	}
-// 	fmt.printfln("[received] %v", strings.to_string(sb))
-
-// 	res.headers["Content-Type"] = "text/plain; charset=utf-8"
-// 	res.body = transmute([]u8)(strings.clone(strings.to_string(sb), context.temp_allocator))
-// }
 
