@@ -43,7 +43,7 @@ spawn :: proc {
 }
 
 branch :: proc {
-	default_branch,
+	chan_branch,
 	signal_branch,
 	cancel_token_branch,
 }

@@ -11,7 +11,7 @@ create_cancel_token :: proc() -> Cancellation_Token {
 }
 
 cancel_token_branch :: proc(self: Cancellation_Token) -> Case {
-	return default_branch((Chan(Empty))(self))
+	return chan_branch((Chan(Empty))(self))
 }
 
 trigger :: proc(self: Cancellation_Token) {

@@ -10,7 +10,7 @@ create_signal :: proc() -> Signal {
 }
 
 signal_branch :: proc(self: Signal) -> Case {
-	return default_branch((Chan(Empty))(self))
+	return chan_branch((Chan(Empty))(self))
 }
 
 signal_destroy :: proc(self: Signal) {

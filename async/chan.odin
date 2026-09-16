@@ -1,22 +1,10 @@
 package async
 
-import "base:builtin"
 import "base:runtime"
 import "core:container/queue"
-import "core:time"
 
 import "coro"
 import "storage"
-
-@(private)
-Case :: struct {
-	ch_id:      u64,
-	ch:         rawptr,
-	receivers:  ^queue.Queue(Waiter),
-	pop:        proc(ch: rawptr, dest: rawptr, ok: ^bool) -> bool,
-	out_ptr:    rawptr,
-	out_ok_ptr: ^bool,
-}
 
 @(private)
 Waiter :: struct {
@@ -61,14 +49,8 @@ chan_destroy :: proc(self: Chan($T)) {
 
 	for inner.receivers.len > 0 {
 		waiter := queue.pop_front(&inner.receivers)
-		if waiter.case_idx == -1 {
-			send(waiter.handle, Result(T){ok = false})
-		} else {
-			ud, ok := storage.get(&sched.slots, u64(waiter.handle))
-			if !ok do continue
-			if coro.get_bytes_stored(ud.co) > 0 do continue
-			send(waiter.handle, -(waiter.case_idx + 1))
-		}
+		if waiter.case_idx == -1 do send(waiter.handle, Result(T){ok = false})
+		else do wake_case(waiter.handle, waiter.case_idx)
 	}
 
 	assert(inner.items.len == 0, "channel destroyed with unconsumed buffered items (leak)")
@@ -161,7 +143,18 @@ len :: #force_inline proc(self: Chan($T)) -> int {
 	return inner == nil ? 0 : queue.len(inner.items)
 }
 
-default_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
+chan_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
+	UserData :: enum {
+		Id,
+		Receivers,
+		Out,
+		Out_Ok,
+	}
+
+	get_ud :: #force_inline proc(ud: []rawptr, idx: UserData, $T: typeid) -> T {
+		return transmute(T)(ud[idx])
+	}
+
 	id: u64 = storage.INVALID
 	chan: ^Inner_Chan(T)
 	receivers: ^queue.Queue(Waiter)
@@ -173,117 +166,49 @@ default_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case
 	}
 
 	return Case {
-		ch_id = id,
-		ch = chan,
-		receivers = receivers,
-		out_ptr = out,
-		out_ok_ptr = out_ok,
-		pop = proc(raw_ch: rawptr, out: rawptr, out_ok: ^bool) -> bool {
-			ch := (^Inner_Chan(T))(raw_ch)
-			if ch.items.len > 0 {
-				result := queue.pop_front(&ch.items)
+		ud = [MAX_USER_DATA]rawptr{transmute(rawptr)(id), receivers, out, out_ok, nil},
+		is_alive = proc(self: ^Case) -> bool {
+			id := get_ud(self.ud[:], .Id, u64)
+			return is_chan_alive(id)
+		},
+		try = proc(self: ^Case) -> bool {
+			id := get_ud(self.ud[:], .Id, u64)
+			out := get_ud(self.ud[:], .Out, ^T)
+			out_ok := get_ud(self.ud[:], .Out_Ok, ^bool)
+
+			ch := Chan(T){id, {}}
+			sched := get_scheduler()
+			inner := (^Inner_Chan(T))(storage.get(&sched.channels, ch.id) or_return)
+			if inner.items.len > 0 {
+				result := queue.pop_front(&inner.items)
 				if out != nil do (^T)(out)^ = result.value
 				if out_ok != nil do out_ok^ = result.ok
 				return true
 			}
+
 			return false
 		},
-	}
-}
-
-select :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
-	sched := get_scheduler()
-
-	for c, i in cases {
-		if !is_chan_alive(c.ch_id) {
-			if c.out_ok_ptr != nil do c.out_ok_ptr^ = false
-			return i
-		}
-		if c.pop(c.ch, c.out_ptr, c.out_ok_ptr) do return i
-	}
-	if timeout == 0 do return -1
-
-	handle := get_handle()
-	for c, i in cases {
-		waiter := Waiter {
-			handle   = handle,
-			dest_ptr = c.out_ptr,
-			case_idx = i,
-		}
-		queue.enqueue(c.receivers, waiter)
-	}
-
-	timer_id: u64
-	if timeout > 0 {
-		fn := proc(ud: rawptr) {wake(Handle(transmute(u64)(ud)))}
-		timer_id = timer(timeout, fn, transmute(rawptr)(handle))
-	}
-
-	yield()
-
-	ud := get_internal_state()
-	idx: int
-
-	if coro.get_bytes_stored(ud.co) >= size_of(int) {
-		raw_idx := pop(int)
-		storage.remove(&sched.timers, timer_id)
-
-		if raw_idx < 0 {
-			idx = (-raw_idx) - 1
-			for c, i in cases {
-				if i != idx && is_chan_alive(c.ch_id) {
-					remove_waiter(c.receivers, handle)
-				}
+		complete = proc(self: ^Case, ok: bool) {
+			out_ok := get_ud(self.ud[:], .Out_Ok, ^bool)
+			if out_ok != nil do out_ok^ = ok
+		},
+		subscribe = proc(self: ^Case, handle: Handle, case_idx: int) {
+			waiter := Waiter {
+				handle   = handle,
+				dest_ptr = get_ud(self.ud[:], .Out, ^T),
+				case_idx = case_idx,
 			}
-			return idx
-		} else do idx = raw_idx
-		if cases[idx].out_ok_ptr != nil do cases[idx].out_ok_ptr^ = raw_idx >= 0
-	} else {
-		idx = -1
-	}
-
-	for c in cases do if is_chan_alive(c.ch_id) do remove_waiter(c.receivers, handle)
-	return idx
-}
-
-all :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
-	if builtin.len(cases) == 0 do return 0
-
-	sched := get_scheduler()
-	total := builtin.len(cases)
-
-	active_cases := make([]Case, total)
-	defer delete(active_cases)
-	copy(active_cases, cases)
-
-	remaining := total
-	start_time := time.now()
-	has_timeout := timeout >= 0
-	time_left := timeout
-
-	for remaining > 0 {
-		if has_timeout && time_left <= 0 do break
-
-		idx := select(active_cases[:remaining], timeout = time_left)
-		if idx == -1 do break
-
-		if idx >= 0 {
-			remaining -= 1
-			if idx < remaining do active_cases[idx] = active_cases[remaining]
-		}
-
-		if has_timeout do time_left = timeout - time.since(start_time)
-	}
-
-	return remaining
-}
-
-@(private)
-remove_waiter :: proc(q: ^queue.Queue(Waiter), handle: Handle) {
-	size := q.len
-	for _ in 0 ..< size {
-		waiter := queue.pop_front(q)
-		if waiter.handle != handle do queue.enqueue(q, waiter)
+			receivers := get_ud(self.ud[:], .Receivers, ^queue.Queue(Waiter))
+			queue.enqueue(receivers, waiter)
+		},
+		unsubscribe = proc(self: ^Case, handle: Handle) {
+			receivers := get_ud(self.ud[:], .Receivers, ^queue.Queue(Waiter))
+			size := receivers.len
+			for _ in 0 ..< size {
+				waiter := queue.pop_front(receivers)
+				if waiter.handle != handle do queue.enqueue(receivers, waiter)
+			}
+		},
 	}
 }
 
