@@ -44,24 +44,23 @@ any :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 
 	ud := get_current_internal_state()
 	idx: int
+	ok: bool
 
 	if coro.get_bytes_stored(ud.co) >= size_of(int) {
 		raw_idx := pop(int)
 		if timeout > 0 do storage.remove(&sched.resources, timer_id)
 
-		if raw_idx < 0 {
-			idx = (-raw_idx) - 1
+		idx, ok = decode_idx(raw_idx)
+		if !ok {
 			for &c, i in cases {
 				if i != idx && c.is_alive(&c) {
 					c.unsubscribe(&c, handle)
 				}
 			}
 			return idx
-		} else do idx = raw_idx
-		cases[idx].complete(&cases[idx], raw_idx >= 0)
-	} else {
-		idx = -1
-	}
+		}
+		cases[idx].complete(&cases[idx], ok)
+	} else do idx = -1
 
 	for &c in cases do if c.is_alive(&c) do c.unsubscribe(&c, handle)
 	return idx
@@ -100,11 +99,26 @@ all :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 }
 
 @(private)
-wake_case :: proc(handle: Handle, case_idx: int) -> bool {
+wake_case :: proc(handle: Handle, case_idx: int, ok: bool) -> bool {
 	sched := get_scheduler()
 	state := get_internal_state(handle) or_return
 	if coro.get_bytes_stored(state.co) > 0 do return false
-	send(handle, -(case_idx + 1))
+
+	send(handle, encode_idx(case_idx, ok))
 	return true
+}
+
+@(private)
+encode_idx :: #force_inline proc(case_idx: int, ok: bool) -> (encoded: int) {
+	encoded = case_idx + 1
+	if !ok do encoded = -encoded
+	return
+}
+
+@(private)
+decode_idx :: #force_inline proc(raw_idx: int) -> (decoded: int, ok: bool) {
+	ok = raw_idx > 0
+	decoded = raw_idx < 0 ? (-raw_idx) - 1 : raw_idx - 1
+	return
 }
 

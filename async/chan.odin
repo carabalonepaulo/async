@@ -53,7 +53,7 @@ chan_destroy :: proc(self: Chan($T)) {
 	for inner.receivers.len > 0 {
 		waiter := queue.pop_front(&inner.receivers)
 		if waiter.case_idx == -1 do send(waiter.handle, Result(T){ok = false})
-		else do wake_case(waiter.handle, waiter.case_idx)
+		else do wake_case(waiter.handle, waiter.case_idx, false)
 	}
 
 	assert(inner.items.len == 0, "channel destroyed with unconsumed buffered items (leak)")
@@ -78,7 +78,7 @@ chan_try_send :: proc(self: Chan($T), value: T) -> bool {
 			return true
 		}
 
-		if wake_case(waiter.handle, waiter.case_idx) {
+		if wake_case(waiter.handle, waiter.case_idx, true) {
 			(^T)(waiter.dest_ptr)^ = value
 			return true
 		}

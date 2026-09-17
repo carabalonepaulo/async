@@ -46,6 +46,7 @@ branch :: proc {
 	chan_branch,
 	signal_branch,
 	cancel_token_branch,
+	semaphore_branch,
 }
 
 run :: proc {

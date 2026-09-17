@@ -22,6 +22,7 @@ Internal_Resource :: enum {
 	Timer,
 	Channel,
 	Cancel_Token,
+	Semaphore,
 }
 
 Resource :: struct {

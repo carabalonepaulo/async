@@ -46,7 +46,7 @@ destroy_cancel_token :: proc(self: Cancel_Token) {
 	inner := resource_as_inner(&res)
 	for _, waiter in inner.waiters {
 		if waiter.case_idx == -1 do wake(waiter.handle)
-		else do wake_case(waiter.handle, waiter.case_idx)
+		else do wake_case(waiter.handle, waiter.case_idx, false)
 	}
 	delete(inner.waiters)
 }
