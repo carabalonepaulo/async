@@ -17,6 +17,11 @@ MAX_USER_DATA :: #config(ASYNC_MAX_USER_DATA, 5)
 DEFAULT_STACK_SIZE :: #config(ASYNC_DEFAULT_STACK_SIZE, 64 * mem.Kilobyte)
 DEFAULT_STORAGE_SIZE :: #config(ASYNC_DEFAULT_STORAGE_SIZE, 256)
 
+Resource :: struct {
+	ud:   [MAX_USER_DATA]rawptr,
+	drop: proc(self: ^Resource),
+}
+
 @(private)
 Hook :: enum {
 	Exit,
@@ -43,13 +48,13 @@ Internal_State :: struct {
 Handle :: distinct u64
 
 wake :: proc(self: Handle) {
-	ud, ok := storage.get(&scheduler.slots, u64(self))
+	ud, ok := get_internal_state(self)
 	assert(ok, "invalid task id")
 	queue.enqueue(&scheduler.ready, u64(self))
 }
 
 scheduler_send :: proc(self: Handle, value: $T) {
-	ud, ok := storage.get(&scheduler.slots, u64(self))
+	ud, ok := get_internal_state(self)
 	assert(ok, "invalid task id")
 
 	if !ud.queued {
@@ -63,12 +68,10 @@ scheduler_send :: proc(self: Handle, value: $T) {
 
 Scheduler :: struct {
 	next_tick:            queue.Queue(Closure),
-	slots:                storage.Storage(^Internal_State),
+	resources:            storage.Storage(Resource),
 	ready:                queue.Queue(u64),
-	timers:               storage.Storage(Closure),
-	channels:             storage.Storage(rawptr),
-	wait_groups:          storage.Storage(Inner_Wait_Group),
 	active_cancel_tokens: map[u64]bool,
+	active_coroutines:    uint,
 	time_wheel:           tw.Time_Wheel,
 	finished:             [dynamic]tw.Task,
 }
@@ -77,12 +80,9 @@ Scheduler :: struct {
 scheduler: Scheduler
 
 scheduler_init :: proc() {
+	storage.init(&scheduler.resources, INITIAL_CAPACITY)
 	queue.init(&scheduler.next_tick)
-	storage.init(&scheduler.slots, INITIAL_CAPACITY)
 	queue.init(&scheduler.ready)
-	storage.init(&scheduler.timers, INITIAL_CAPACITY)
-	storage.init(&scheduler.channels, INITIAL_CAPACITY)
-	storage.init(&scheduler.wait_groups, INITIAL_CAPACITY)
 
 	scheduler.active_cancel_tokens = make(map[u64]bool)
 
@@ -99,14 +99,17 @@ scheduler_deinit :: proc() {
 	}
 	queue.destroy(&scheduler.next_tick)
 
-	assert(storage.count(&scheduler.slots) == 0, "scheduler has pending tasks")
-	assert(storage.count(&scheduler.channels) == 0, "scheduler has active channels")
+	storage.retain(&scheduler.resources, nil, proc(id: u64, res: ^Resource, ud: rawptr) -> bool {
+		if res.drop != nil {
+			res.drop(res)
+			return false
+		}
+		return true
+	})
+	assert(storage.count(&scheduler.resources) == 0, "scheduler has active resources")
 
-	storage.deinit(&scheduler.slots)
 	queue.destroy(&scheduler.ready)
-	storage.deinit(&scheduler.timers)
-	storage.deinit(&scheduler.channels)
-	storage.deinit(&scheduler.wait_groups)
+	storage.deinit(&scheduler.resources)
 
 	tw.deinit(&scheduler.time_wheel)
 	delete(scheduler.finished)
@@ -137,7 +140,7 @@ scheduler_run_with_poly :: proc(arg: $T, tick: proc(arg: T), sleep: time.Duratio
 
 scheduler_block :: proc(handle: Handle, sleep: time.Duration = 0) {
 	for {
-		storage.get_ptr(&scheduler.slots, u64(handle)) or_break
+		storage.get_ptr(&scheduler.resources, u64(handle)) or_break
 		poll()
 		if sleep > 0 do time.sleep(sleep)
 	}
@@ -145,7 +148,7 @@ scheduler_block :: proc(handle: Handle, sleep: time.Duration = 0) {
 
 scheduler_block_with :: proc(handle: Handle, tick: proc(), sleep: time.Duration = 0) {
 	for {
-		storage.get_ptr(&scheduler.slots, u64(handle)) or_break
+		storage.get_ptr(&scheduler.resources, u64(handle)) or_break
 		tick()
 		poll()
 		if sleep > 0 do time.sleep(sleep)
@@ -176,22 +179,26 @@ poll :: proc() {
 	ready_count := queue.len(scheduler.ready)
 	for _ in 0 ..< ready_count {
 		task_id := queue.pop_front(&scheduler.ready)
-		ud := storage.get(&scheduler.slots, task_id) or_continue
+		res := storage.get(&scheduler.resources, task_id) or_continue
+
+		ud := transmute(^Internal_State)(res.ud[0])
 		ud.queued = false
 		coro.check(coro.resume(ud.co))
 
 		if coro.status(ud.co) == .Dead {
-			storage.remove(&scheduler.slots, task_id)
+			storage.remove(&scheduler.resources, task_id)
 			coro.check(coro.destroy(ud.co))
 			free(ud)
+			scheduler.active_coroutines -= 1
 		}
 	}
 
 	tw.spin(&scheduler.time_wheel, &scheduler.finished)
 	if builtin.len(scheduler.finished) > 0 {
 		for id in scheduler.finished {
-			if task, ok := storage.remove(&scheduler.timers, id); ok {
-				task.fn(task.ud)
+			if res, ok := storage.remove(&scheduler.resources, id); ok {
+				closure := resource_as_closure(&res)
+				closure.fn(closure.ud)
 			}
 		}
 	}
@@ -199,8 +206,9 @@ poll :: proc() {
 }
 
 join :: proc(handle: Handle) {
-	state, ok := storage.get(&scheduler.slots, u64(handle))
+	state, ok := get_internal_state(handle)
 	if !ok do return
+
 	assert(state.hooks[.Exit].fn == nil, "multiple join calls on the same handle")
 	state.hooks[.Exit] = Closure {
 		ud = transmute(rawptr)(get_handle()),
@@ -213,7 +221,7 @@ join_many :: proc(handles: []Handle) {
 	wg := create_wait_group()
 	defer destroy(wg)
 	for handle in handles {
-		state := storage.get(&scheduler.slots, u64(handle)) or_continue
+		state := get_internal_state(handle) or_continue
 		assert(state.hooks[.Exit].fn == nil, "multiple join calls on the same handle")
 		state.hooks[.Exit] = Closure {
 			ud = transmute(rawptr)(wg),
@@ -229,13 +237,15 @@ next_tick :: proc(fn: proc(ud: rawptr), ud: rawptr = nil) {
 }
 
 timer :: proc(n: time.Duration, fn: proc(ud: rawptr), ud: rawptr = nil) -> u64 {
-	id := storage.add(&scheduler.timers, Closure{ud, fn})
+	res := Resource{}
+	resource_as_closure(&res)^ = Closure{ud, fn}
+	id := storage.add(&scheduler.resources, res)
 	tw.after(&scheduler.time_wheel, n, tw.Task(id))
 	return id
 }
 
 sleep :: proc(n: time.Duration) {
-	ud := get_internal_state()
+	ud := get_current_internal_state()
 	fn := proc(ud: rawptr) {wake(Handle(transmute(u64)(ud)))}
 	timer(n, fn, transmute(rawptr)(ud.id))
 	yield()
@@ -260,25 +270,31 @@ scheduler_recv :: #force_inline proc($T: typeid) -> T {
 }
 
 @(private)
-get_internal_state :: #force_inline proc() -> ^Internal_State {
+get_current_internal_state :: #force_inline proc() -> ^Internal_State {
 	return (^Internal_State)(coro.get_user_data(coro.running()))
 }
 
+@(private)
+get_internal_state :: #force_inline proc(handle: Handle) -> (state: ^Internal_State, ok: bool) {
+	res := storage.get_ptr(&scheduler.resources, u64(handle)) or_return
+	return transmute(^Internal_State)(res.ud[0]), true
+}
+
 get_user_data_from_current :: proc(idx: int) -> rawptr {
-	return get_internal_state().ud[idx]
+	return get_current_internal_state().ud[idx]
 }
 
 get_user_data_from_handle :: proc(handle: Handle, idx: int) -> rawptr {
-	state, ok := storage.get(&scheduler.slots, u64(handle))
+	state, ok := get_internal_state(handle)
 	return ok ? state.ud[idx] : nil
 }
 
 set_user_data_to_current :: proc(idx: int, ud: rawptr) {
-	get_internal_state().ud[idx] = ud
+	get_current_internal_state().ud[idx] = ud
 }
 
 set_user_data_to_handle :: proc(handle: Handle, idx: int, ud: rawptr) {
-	state, ok := storage.get(&scheduler.slots, u64(handle))
+	state, ok := get_internal_state(handle)
 	if ok do state.ud[idx] = ud
 }
 
@@ -287,12 +303,12 @@ get_scheduler :: #force_inline proc() -> ^Scheduler {
 }
 
 get_handle :: #force_inline proc() -> Handle {
-	ud := get_internal_state()
+	ud := get_current_internal_state()
 	return Handle(ud.id)
 }
 
 get_pending :: #force_inline proc() -> uint {
-	return storage.count(&scheduler.slots)
+	return scheduler.active_coroutines
 }
 
 @(private)
@@ -303,7 +319,7 @@ push :: proc(co: ^coro.Coro, value: $T) {
 
 @(private)
 pop :: proc($T: typeid) -> T {
-	ud := get_internal_state()
+	ud := get_current_internal_state()
 	if coro.get_bytes_stored(ud.co) < size_of(T) do panic("send/recv mismatch")
 	value: T
 	coro.check(coro.pop(ud.co, &value, size_of(T)))
@@ -312,7 +328,7 @@ pop :: proc($T: typeid) -> T {
 
 @(private)
 create_ud :: proc(fn: rawptr, allocator: mem.Allocator) -> ^Internal_State {
-	entry := storage.entry(&scheduler.slots)
+	entry := storage.entry(&scheduler.resources)
 
 	ud := new(Internal_State)
 	ud.ctx = context
@@ -321,8 +337,11 @@ create_ud :: proc(fn: rawptr, allocator: mem.Allocator) -> ^Internal_State {
 	ud.id = storage.get_id(&entry)
 	ud.allocator = allocator
 
-	storage.insert(&entry, ud)
+	res := Resource{}
+	res.ud[0] = ud
+	storage.insert(&entry, res)
 
+	scheduler.active_coroutines += 1
 	return ud
 }
 
@@ -365,5 +384,12 @@ handle_from_rawptr :: #force_inline proc(ptr: rawptr) -> Handle {
 call_hook :: proc(state: ^Internal_State, hook: Hook) {
 	closure := state.hooks[hook]
 	if closure.fn != nil do closure.fn(closure.ud)
+}
+
+@(private)
+resource_as_closure :: proc(res: ^Resource) -> ^Closure {
+	#assert(size_of([MAX_USER_DATA]rawptr) >= size_of(Closure))
+	#assert(align_of([MAX_USER_DATA]rawptr) >= align_of(Closure))
+	return transmute(^Closure)(&res.ud[0])
 }
 

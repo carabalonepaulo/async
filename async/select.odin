@@ -42,12 +42,12 @@ any :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 
 	yield()
 
-	ud := get_internal_state()
+	ud := get_current_internal_state()
 	idx: int
 
 	if coro.get_bytes_stored(ud.co) >= size_of(int) {
 		raw_idx := pop(int)
-		storage.remove(&sched.timers, timer_id)
+		if timeout > 0 do storage.remove(&sched.resources, timer_id)
 
 		if raw_idx < 0 {
 			idx = (-raw_idx) - 1
@@ -102,7 +102,7 @@ all :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 @(private)
 wake_case :: proc(handle: Handle, case_idx: int) {
 	sched := get_scheduler()
-	state, ok := storage.get(&sched.slots, u64(handle))
+	state, ok := get_internal_state(handle)
 	if !ok do return
 	if coro.get_bytes_stored(state.co) > 0 do return
 	send(handle, -(case_idx + 1))

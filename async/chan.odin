@@ -2,6 +2,7 @@ package async
 
 import "base:runtime"
 import "core:container/queue"
+import "core:fmt"
 
 import "coro"
 import "storage"
@@ -36,17 +37,18 @@ create_chan :: proc($T: typeid, cap := 16) -> Chan(T) {
 	queue.init(&inner.items, cap)
 
 	sched := get_scheduler()
-	id := storage.add(&sched.channels, rawptr(inner))
+	res := Resource{}
+	res.ud[0] = inner
+	id := storage.add(&sched.resources, res)
 	return Chan(T){id = id}
 }
 
 chan_destroy :: proc(self: Chan($T)) {
 	sched := get_scheduler()
-	ptr, ok := storage.remove(&sched.channels, self.id)
+	res, ok := storage.remove(&sched.resources, self.id)
 	if !ok do return
 
-	inner := (^Inner_Chan(T))(ptr)
-
+	inner := (^Inner_Chan(T))(res.ud[0])
 	for inner.receivers.len > 0 {
 		waiter := queue.pop_front(&inner.receivers)
 		if waiter.case_idx == -1 do send(waiter.handle, Result(T){ok = false})
@@ -75,8 +77,7 @@ chan_try_send :: proc(self: Chan($T), value: T) -> bool {
 			return true
 		}
 
-		ud, ok := storage.get(&sched.slots, u64(waiter.handle))
-		if !ok do continue
+		ud := get_internal_state(waiter.handle) or_continue
 		if coro.get_bytes_stored(ud.co) > 0 do continue
 
 		ptr := (^T)(waiter.dest_ptr)
@@ -178,7 +179,7 @@ chan_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
 
 			ch := Chan(T){id, {}}
 			sched := get_scheduler()
-			inner := (^Inner_Chan(T))(storage.get(&sched.channels, ch.id) or_return)
+			inner := get_inner(ch)
 			if inner.items.len > 0 {
 				result := queue.pop_front(&inner.items)
 				if out != nil do (^T)(out)^ = result.value
@@ -221,7 +222,7 @@ is_chan_alive :: proc {
 @(private)
 is_chan_alive_by_id :: proc(id: u64) -> bool {
 	sched := get_scheduler()
-	_, ok := storage.get(&sched.channels, id)
+	_, ok := storage.get_ptr(&sched.resources, id)
 	return ok
 }
 
@@ -233,9 +234,9 @@ is_chan_alive_by_handle :: #force_inline proc(chan: Chan($T)) -> bool {
 @(private)
 get_inner :: proc(chan: Chan($T)) -> ^Inner_Chan(T) {
 	sched := get_scheduler()
-	ptr, ok := storage.get(&sched.channels, chan.id)
+	res, ok := storage.get_ptr(&sched.resources, chan.id)
 	if !ok do return nil
-	return (^Inner_Chan(T))(ptr)
+	return (^Inner_Chan(T))(res.ud[0])
 }
 
 chan_into_rawptr :: #force_inline proc(self: Chan($T)) -> rawptr {

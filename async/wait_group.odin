@@ -11,8 +11,11 @@ Inner_Wait_Group :: struct {
 Wait_Group :: distinct u64
 
 create_wait_group :: proc() -> Wait_Group {
+	#assert(size_of([MAX_USER_DATA]rawptr) >= size_of(Inner_Wait_Group))
+	#assert(align_of([MAX_USER_DATA]rawptr) >= align_of(Inner_Wait_Group))
+
 	sched := get_scheduler()
-	id := storage.add(&sched.wait_groups, Inner_Wait_Group{})
+	id := storage.add(&sched.resources, Resource{})
 	return Wait_Group(id)
 }
 
@@ -21,7 +24,7 @@ wait_group_destroy :: proc(self: Wait_Group) {
 	assert(state.waiter == nil && state.count == 0, "destroying active wait group")
 
 	sched := get_scheduler()
-	storage.remove(&sched.wait_groups, transmute(u64)(self))
+	storage.remove(&sched.resources, transmute(u64)(self))
 }
 
 add :: proc(self: Wait_Group, n: int = 1) {
@@ -54,8 +57,15 @@ wait_group_wait :: proc(self: Wait_Group) {
 @(private = "file")
 get_inner :: proc(self: Wait_Group) -> ^Inner_Wait_Group {
 	sched := get_scheduler()
-	state, ok := storage.get_ptr(&sched.wait_groups, transmute(u64)(self))
+	res, ok := storage.get_ptr(&sched.resources, transmute(u64)(self))
 	assert(ok, "invalid wait group")
-	return state
+	return resource_as_inner(res)
+}
+
+@(private = "file")
+resource_as_inner :: proc(res: ^Resource) -> ^Inner_Wait_Group {
+	#assert(size_of([MAX_USER_DATA]rawptr) >= size_of(Inner_Wait_Group))
+	#assert(align_of([MAX_USER_DATA]rawptr) >= align_of(Inner_Wait_Group))
+	return transmute(^Inner_Wait_Group)(&res.ud[0])
 }
 
