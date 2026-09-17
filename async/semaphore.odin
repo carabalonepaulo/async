@@ -20,9 +20,9 @@ try_acquire :: proc(self: Semaphore) -> bool {
 	return ok
 }
 
-acquire :: proc(self: Semaphore, cancel: Maybe(Cancellation_Token) = nil) -> (ok: bool) {
+acquire :: proc(self: Semaphore, cancel: Maybe(Cancel_Token) = nil) -> (ok: bool) {
 	chan := (Chan(Empty))(self)
-	if cancel, cancel_ok := cancel.(Cancellation_Token); cancel_ok {
+	if cancel, cancel_ok := cancel.(Cancel_Token); cancel_ok {
 		idx := select({branch(cancel), branch(chan, nil, &ok)})
 		if idx == 0 do return false
 	} else do select({branch(chan, nil, &ok)})
@@ -37,12 +37,12 @@ release :: proc(self: Semaphore) {
 }
 
 @(deferred_in_out = _guard)
-guard :: proc(self: Semaphore, cancel: Maybe(Cancellation_Token) = nil) -> bool {
+guard :: proc(self: Semaphore, cancel: Maybe(Cancel_Token) = nil) -> bool {
 	return acquire(self, cancel)
 }
 
 @(private = "file")
-_guard :: proc(self: Semaphore, _: Maybe(Cancellation_Token), ok: bool) {
+_guard :: proc(self: Semaphore, _: Maybe(Cancel_Token), ok: bool) {
 	if ok do release(self)
 }
 

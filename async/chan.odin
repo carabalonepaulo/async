@@ -7,7 +7,7 @@ import "core:fmt"
 import "coro"
 import "storage"
 
-@(private)
+@(private = "file")
 Waiter :: struct {
 	handle:   Handle,
 	dest_ptr: rawptr,
@@ -38,6 +38,7 @@ create_chan :: proc($T: typeid, cap := 16) -> Chan(T) {
 
 	sched := get_scheduler()
 	res := Resource{}
+	res.id = auto_cast Internal_Resource.Channel
 	res.ud[0] = inner
 	id := storage.add(&sched.resources, res)
 	return Chan(T){id = id}
@@ -77,13 +78,10 @@ chan_try_send :: proc(self: Chan($T), value: T) -> bool {
 			return true
 		}
 
-		ud := get_internal_state(waiter.handle) or_continue
-		if coro.get_bytes_stored(ud.co) > 0 do continue
-
-		ptr := (^T)(waiter.dest_ptr)
-		ptr^ = value
-		send(waiter.handle, waiter.case_idx)
-		return true
+		if wake_case(waiter.handle, waiter.case_idx) {
+			(^T)(waiter.dest_ptr)^ = value
+			return true
+		}
 	}
 
 	return false

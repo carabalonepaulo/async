@@ -5,7 +5,7 @@ import "core:fmt"
 import "core:time"
 
 @(private = "file")
-child :: proc(sem: async.Semaphore, cancel: async.Cancellation_Token, count: ^int) {
+child :: proc(sem: async.Semaphore, cancel: async.Cancel_Token, count: ^int) {
 	for _ in 0 ..< 3 {
 		async.guard(sem, cancel) or_break
 		count^ += 1

@@ -43,7 +43,7 @@ Request :: struct {
 	body:    []u8,
 	id:      int,
 	out:     async.Chan(Result),
-	cancel:  Maybe(async.Cancellation_Token),
+	cancel:  Maybe(async.Cancel_Token),
 }
 
 Result :: struct {
@@ -60,7 +60,7 @@ Request_Task :: struct {
 	c_url:     cstring,
 	id:        int,
 	out:       async.Chan(Result),
-	cancel:    Maybe(async.Cancellation_Token),
+	cancel:    Maybe(async.Cancel_Token),
 	allocator: mem.Allocator,
 }
 
@@ -224,10 +224,8 @@ poll :: proc(self: ^Client) {
 	if len(self.active_requests) == 0 do return
 
 	for easy_handle, task in self.active_requests {
-		cancel, ok := task.cancel.(async.Cancellation_Token)
-		if !ok do continue
+		cancel := task.cancel.(async.Cancel_Token) or_continue
 		if !async.is_triggered(cancel) do continue
-
 		queue.enqueue(&self.cleanup, easy_handle)
 	}
 

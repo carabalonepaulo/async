@@ -31,6 +31,7 @@ coroutine :: proc(client: ^http.Client) {
 		fmt.println("[http] select timeout")
 	case 0:
 		fmt.printfln("[http] request completed, is err %v", res.err != .None)
+		http.destroy(res.resp)
 	case 1:
 		fmt.println("[http] request cancelled (timeout with cancel_after)")
 	}

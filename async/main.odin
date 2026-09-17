@@ -17,7 +17,15 @@ MAX_USER_DATA :: #config(ASYNC_MAX_USER_DATA, 5)
 DEFAULT_STACK_SIZE :: #config(ASYNC_DEFAULT_STACK_SIZE, 64 * mem.Kilobyte)
 DEFAULT_STORAGE_SIZE :: #config(ASYNC_DEFAULT_STORAGE_SIZE, 256)
 
+Internal_Resource :: enum {
+	Coroutine,
+	Timer,
+	Channel,
+	Cancel_Token,
+}
+
 Resource :: struct {
+	id:   int,
 	ud:   [MAX_USER_DATA]rawptr,
 	drop: proc(self: ^Resource),
 }
@@ -91,8 +99,6 @@ scheduler_init :: proc() {
 }
 
 scheduler_deinit :: proc() {
-	destroy_cancel_tokens()
-
 	for queue.len(scheduler.next_tick) > 0 {
 		meta := queue.dequeue(&scheduler.next_tick)
 		meta.fn(meta.ud)
@@ -237,7 +243,10 @@ next_tick :: proc(fn: proc(ud: rawptr), ud: rawptr = nil) {
 }
 
 timer :: proc(n: time.Duration, fn: proc(ud: rawptr), ud: rawptr = nil) -> u64 {
-	res := Resource{}
+	res := Resource {
+		id = auto_cast Internal_Resource.Timer,
+		drop = proc(self: ^Resource) {},
+	}
 	resource_as_closure(&res)^ = Closure{ud, fn}
 	id := storage.add(&scheduler.resources, res)
 	tw.after(&scheduler.time_wheel, n, tw.Task(id))
@@ -251,7 +260,7 @@ sleep :: proc(n: time.Duration) {
 	yield()
 }
 
-sleep_or_cancel :: proc(n: time.Duration, cancel: Cancellation_Token) -> (ok: bool) {
+sleep_or_cancel :: proc(n: time.Duration, cancel: Cancel_Token) -> (ok: bool) {
 	return select({branch(cancel)}, timeout = n) == -1
 }
 
@@ -338,6 +347,7 @@ create_ud :: proc(fn: rawptr, allocator: mem.Allocator) -> ^Internal_State {
 	ud.allocator = allocator
 
 	res := Resource{}
+	res.id = auto_cast Internal_Resource.Coroutine
 	res.ud[0] = ud
 	storage.insert(&entry, res)
 

@@ -6,7 +6,7 @@ import "core:time"
 
 Signal_Arg :: struct {
 	ch:     async.Chan(int),
-	cancel: async.Cancellation_Token,
+	cancel: async.Cancel_Token,
 }
 
 signal_producer :: proc(ch: async.Chan(int)) {
