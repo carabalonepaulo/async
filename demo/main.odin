@@ -33,6 +33,7 @@ main :: proc() {
 	io.init()
 	defer io.deinit()
 
+	one_shot_demo()
 	semaphore_demo()
 	join_many_demo()
 	join_demo()

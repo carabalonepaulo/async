@@ -17,20 +17,24 @@ destroy :: proc {
 
 try_send :: proc {
 	chan_try_send,
+	one_shot_try_send,
 }
 
 send :: proc {
 	scheduler_send,
 	chan_send,
+	one_shot_send,
 }
 
 try_recv :: proc {
 	chan_try_recv,
+	one_shot_try_recv,
 }
 
 recv :: proc {
 	scheduler_recv,
 	chan_recv,
+	one_shot_recv,
 }
 
 spawn :: proc {
@@ -47,6 +51,7 @@ branch :: proc {
 	signal_branch,
 	cancel_token_branch,
 	semaphore_branch,
+	one_shot_branch,
 }
 
 run :: proc {

@@ -4,6 +4,7 @@ import "base:builtin"
 import "base:runtime"
 import "core:c"
 import "core:container/queue"
+import "core:fmt"
 import "core:mem"
 import "core:time"
 
@@ -23,6 +24,7 @@ Internal_Resource :: enum {
 	Channel,
 	Cancel_Token,
 	Semaphore,
+	One_Shot,
 }
 
 Resource :: struct {
@@ -111,6 +113,7 @@ scheduler_deinit :: proc() {
 			res.drop(res)
 			return false
 		}
+		fmt.println(res.id)
 		return true
 	})
 	assert(storage.count(&scheduler.resources) == 0, "scheduler has active resources")
