@@ -15,6 +15,7 @@ Single threaded cooperative coroutine scheduler, all primitives included.
 - signal (unbuffered broadcaster)
 - wait group
 - semaphore
+- one shot
 
 ### Packages
 - io (nbio)
