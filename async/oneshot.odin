@@ -98,44 +98,53 @@ one_shot_recv :: proc(self: One_Shot($T)) -> (value: T, ok: bool) {
 }
 
 one_shot_branch :: proc(self: One_Shot($T), out: ^T, out_ok: ^bool) -> Case {
-	get_one_shot :: proc(ud: rawptr) -> One_Shot(T) {
-		id := transmute(u64)(ud)
-		return One_Shot(T){id = id}
+	User_Data :: enum {
+		Id,
+		Out,
+		Out_Ok,
+	}
+
+	get :: #force_inline proc(self: ^Case, ud: User_Data, $A: typeid) -> A {
+		return transmute(A)(self.ud[ud])
+	}
+
+	get_one_shot :: #force_inline proc(self: ^Case) -> One_Shot(T) {
+		return One_Shot(T){id = get(self, .Id, u64)}
 	}
 
 	return Case {
 		ud = [MAX_USER_DATA]rawptr{transmute(rawptr)(self.id), out, out_ok, nil, nil},
 		is_alive = proc(self: ^Case) -> bool {
-			id := transmute(u64)(self.ud[0])
+			id := get(self, .Id, u64)
 			sched := get_scheduler()
 			_, ok := storage.get_ptr(&sched.resources, id)
 			return ok
 		},
 		try = proc(self: ^Case) -> (ok: bool) {
-			os := get_one_shot(self.ud[0])
+			os := get_one_shot(self)
 			value := one_shot_try_recv(os) or_return
-			(^T)(self.ud[1])^ = value
-			(^bool)(self.ud[2])^ = true
+			get(self, .Out, ^T)^ = value
+			get(self, .Out_Ok, ^bool)^ = true
 			return true
 		},
 		complete = proc(self: ^Case, ok: bool) {
-			(^bool)(self.ud[2])^ = ok
+			get(self, .Out_Ok, ^bool)^ = ok
 			if ok {
-				os := get_one_shot(self.ud[0])
+				os := get_one_shot(self)
 				inner := get_inner(os)
-				(^T)(self.ud[1])^ = (^T)(inner.value)^
-				one_shot_destroy(get_one_shot(self.ud[0]))
+				get(self, .Out, ^T)^ = (^T)(inner.value)^
+				one_shot_destroy(os)
 			}
 		},
 		subscribe = proc(self: ^Case, handle: Handle, case_idx: int) {
-			os := get_one_shot(self.ud[0])
+			os := get_one_shot(self)
 			inner := get_inner(os)
 			assert(inner.handle == nil)
 			inner.handle = handle
 			inner.case_idx = case_idx
 		},
 		unsubscribe = proc(self: ^Case, handle: Handle) {
-			os := get_one_shot(self.ud[0])
+			os := get_one_shot(self)
 			inner := get_inner(os)
 			inner.handle = nil
 			inner.case_idx = 0

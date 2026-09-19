@@ -2,9 +2,7 @@ package async
 
 import "base:runtime"
 import "core:container/queue"
-import "core:fmt"
 
-import "coro"
 import "storage"
 
 @(private = "file")
@@ -143,15 +141,15 @@ len :: #force_inline proc(self: Chan($T)) -> int {
 }
 
 chan_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
-	UserData :: enum {
+	User_Data :: enum {
 		Id,
 		Receivers,
 		Out,
 		Out_Ok,
 	}
 
-	get_ud :: #force_inline proc(ud: []rawptr, idx: UserData, $T: typeid) -> T {
-		return transmute(T)(ud[idx])
+	get :: #force_inline proc(self: ^Case, idx: User_Data, $T: typeid) -> T {
+		return transmute(T)(self.ud[idx])
 	}
 
 	id: u64 = storage.INVALID
@@ -167,13 +165,13 @@ chan_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
 	return Case {
 		ud = [MAX_USER_DATA]rawptr{transmute(rawptr)(id), receivers, out, out_ok, nil},
 		is_alive = proc(self: ^Case) -> bool {
-			id := get_ud(self.ud[:], .Id, u64)
+			id := get(self, .Id, u64)
 			return is_chan_alive(id)
 		},
 		try = proc(self: ^Case) -> bool {
-			id := get_ud(self.ud[:], .Id, u64)
-			out := get_ud(self.ud[:], .Out, ^T)
-			out_ok := get_ud(self.ud[:], .Out_Ok, ^bool)
+			id := get(self, .Id, u64)
+			out := get(self, .Out, ^T)
+			out_ok := get(self, .Out_Ok, ^bool)
 
 			ch := Chan(T){id, {}}
 			sched := get_scheduler()
@@ -188,20 +186,20 @@ chan_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
 			return false
 		},
 		complete = proc(self: ^Case, ok: bool) {
-			out_ok := get_ud(self.ud[:], .Out_Ok, ^bool)
+			out_ok := get(self, .Out_Ok, ^bool)
 			if out_ok != nil do out_ok^ = ok
 		},
 		subscribe = proc(self: ^Case, handle: Handle, case_idx: int) {
 			waiter := Waiter {
 				handle   = handle,
-				dest_ptr = get_ud(self.ud[:], .Out, ^T),
+				dest_ptr = get(self, .Out, ^T),
 				case_idx = case_idx,
 			}
-			receivers := get_ud(self.ud[:], .Receivers, ^queue.Queue(Waiter))
+			receivers := get(self, .Receivers, ^queue.Queue(Waiter))
 			queue.enqueue(receivers, waiter)
 		},
 		unsubscribe = proc(self: ^Case, handle: Handle) {
-			receivers := get_ud(self.ud[:], .Receivers, ^queue.Queue(Waiter))
+			receivers := get(self, .Receivers, ^queue.Queue(Waiter))
 			size := receivers.len
 			for _ in 0 ..< size {
 				waiter := queue.pop_front(receivers)
