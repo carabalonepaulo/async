@@ -91,47 +91,41 @@ release :: proc(self: Semaphore) {
 }
 
 semaphore_branch :: proc(self: Semaphore, out_ok: ^bool) -> Case {
-	User_Data :: enum {
-		Id,
-		Out_Ok,
-	}
-
-	get :: #force_inline proc(self: ^Case, ud: User_Data, $A: typeid) -> A {
-		return transmute(A)(self.ud[ud])
+	Case_State :: struct {
+		sem:    Semaphore,
+		out_ok: ^bool,
 	}
 
 	ud := [CASE_INLINE_STORAGE]rawptr{}
-	ud[User_Data.Id] = transmute(rawptr)(self)
-	ud[User_Data.Out_Ok] = out_ok
+	store_inline(&ud, Case_State{self, out_ok})
 
 	return Case {
 		ud = ud, //
 		is_alive = proc(self: ^Case) -> bool {
-			id := get(self, .Id, u64)
+			state := load_inline(&self.ud, Case_State)
 			sched := get_scheduler()
-			_, ok := storage.get_ptr(&sched.resources, id)
+			_, ok := storage.get_ptr(&sched.resources, transmute(u64)(state.sem))
 			return ok
 		},
 		try = proc(self: ^Case) -> (ok: bool) {
-			sem := transmute(Semaphore)(self.ud[0])
-			if ok = try_acquire(sem); ok {
-				out_ok := get(self, .Out_Ok, ^bool)
-				if out_ok != nil do out_ok^ = true
+			state := load_inline(&self.ud, Case_State)
+			if ok = try_acquire(state.sem); ok {
+				if state.out_ok != nil do state.out_ok^ = true
 			}
 			return
 		},
 		complete = proc(self: ^Case, ok: bool) {
-			out_ok := get(self, .Out_Ok, ^bool)
-			if out_ok != nil do out_ok^ = ok
+			state := load_inline(&self.ud, Case_State)
+			if state.out_ok != nil do state.out_ok^ = ok
 		},
 		subscribe = proc(self: ^Case, handle: Handle, case_idx: int) {
-			sem := get(self, .Id, Semaphore)
-			inner := get_inner(sem)
+			state := load_inline(&self.ud, Case_State)
+			inner := get_inner(state.sem)
 			queue.enqueue(&inner.waiters, Waiter{handle, case_idx})
 		},
 		unsubscribe = proc(self: ^Case, handle: Handle) {
-			sem := get(self, .Id, Semaphore)
-			inner := get_inner(sem)
+			state := load_inline(&self.ud, Case_State)
+			inner := get_inner(state.sem)
 			for _ in 0 ..< queue.len(inner.waiters) {
 				waiter := queue.pop_front(&inner.waiters)
 				if waiter.handle != handle do queue.enqueue(&inner.waiters, waiter)

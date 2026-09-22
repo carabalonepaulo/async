@@ -105,57 +105,47 @@ one_shot_recv :: proc(self: One_Shot($T)) -> (value: T, ok: bool) {
 }
 
 one_shot_branch :: proc(self: One_Shot($T), out: ^T, out_ok: ^bool) -> Case {
-	User_Data :: enum {
-		Id,
-		Out,
-		Out_Ok,
-	}
-
-	get :: #force_inline proc(self: ^Case, ud: User_Data, $A: typeid) -> A {
-		return transmute(A)(self.ud[ud])
-	}
-
-	get_one_shot :: #force_inline proc(self: ^Case) -> One_Shot(T) {
-		return One_Shot(T){id = get(self, .Id, u64)}
+	Case_State :: struct($T: typeid) {
+		os:     One_Shot(T),
+		out:    ^T,
+		out_ok: ^bool,
 	}
 
 	ud := [CASE_INLINE_STORAGE]rawptr{}
-	ud[User_Data.Id] = transmute(rawptr)(self.id)
-	ud[User_Data.Out] = out
-	ud[User_Data.Out_Ok] = out_ok
+	store_inline(&ud, Case_State(T){os = self, out = out, out_ok = out_ok})
 
 	return Case {
 		ud = ud, //
 		is_alive = proc(self: ^Case) -> bool {
-			id := get(self, .Id, u64)
+			state := load_inline(&self.ud, Case_State(T))
 			sched := get_scheduler()
-			_, ok := storage.get_ptr(&sched.resources, id)
+			_, ok := storage.get_ptr(&sched.resources, state.os.id)
 			return ok
 		},
 		try = proc(self: ^Case) -> (ok: bool) {
-			os := get_one_shot(self)
-			value := one_shot_try_recv(os) or_return
-			get(self, .Out, ^T)^ = value
-			get(self, .Out_Ok, ^bool)^ = true
+			state := load_inline(&self.ud, Case_State(T))
+			value := one_shot_try_recv(state.os) or_return
+			state.out^ = value
+			state.out_ok^ = true
 			return true
 		},
 		complete = proc(self: ^Case, ok: bool) {
-			get(self, .Out_Ok, ^bool)^ = ok
+			state := load_inline(&self.ud, Case_State(T))
+			state.out_ok^ = ok
 			if ok {
-				os := get_one_shot(self)
-				raw_inner := get_raw_inner(os)
-				get(self, .Out, ^T)^ = get_value(raw_inner, T)
-				one_shot_destroy(os)
+				raw_inner := get_raw_inner(state.os)
+				state.out^ = get_value(raw_inner, T)
+				one_shot_destroy(state.os)
 			}
 		},
 		subscribe = proc(self: ^Case, handle: Handle, case_idx: int) {
-			os := get_one_shot(self)
-			raw_inner := get_raw_inner(os)
+			state := load_inline(&self.ud, Case_State(T))
+			raw_inner := get_raw_inner(state.os)
 			set_both(raw_inner, T, handle, case_idx, true)
 		},
 		unsubscribe = proc(self: ^Case, handle: Handle) {
-			os := get_one_shot(self)
-			raw_inner := get_raw_inner(os)
+			state := load_inline(&self.ud, Case_State(T))
+			raw_inner := get_raw_inner(state.os)
 			set_both(raw_inner, T, nil, 0, false)
 		},
 	}

@@ -139,15 +139,11 @@ len :: #force_inline proc(self: Chan($T)) -> int {
 }
 
 chan_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
-	User_Data :: enum {
-		Id,
-		Receivers,
-		Out,
-		Out_Ok,
-	}
-
-	get :: #force_inline proc(self: ^Case, idx: User_Data, $T: typeid) -> T {
-		return transmute(T)(self.ud[idx])
+	Case_State :: struct($T: typeid) {
+		ch:        Chan(T),
+		receivers: ^queue.Queue(Waiter),
+		out:       ^T,
+		out_ok:    ^bool,
 	}
 
 	id: u64 = storage.INVALID
@@ -161,53 +157,46 @@ chan_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
 	}
 
 	ud := [CASE_INLINE_STORAGE]rawptr{}
-	ud[User_Data.Id] = transmute(rawptr)(id)
-	ud[User_Data.Receivers] = receivers
-	ud[User_Data.Out] = out
-	ud[User_Data.Out_Ok] = out_ok
+	store_inline(&ud, Case_State(T){ch, receivers, out, out_ok})
 
 	return Case {
 		ud = ud, //
 		is_alive = proc(self: ^Case) -> bool {
-			id := get(self, .Id, u64)
-			return is_chan_alive(id)
+			state := load_inline(&self.ud, Case_State(T))
+			return is_chan_alive(state.ch.id)
 		},
 		try = proc(self: ^Case) -> bool {
-			id := get(self, .Id, u64)
-			out := get(self, .Out, ^T)
-			out_ok := get(self, .Out_Ok, ^bool)
-
-			ch := Chan(T){id, {}}
+			state := load_inline(&self.ud, Case_State(T))
 			sched := get_scheduler()
-			inner := get_inner(ch)
+			inner := get_inner(state.ch)
 			if inner.items.len > 0 {
 				result := queue.pop_front(&inner.items)
-				if out != nil do (^T)(out)^ = result.value
-				if out_ok != nil do out_ok^ = result.ok
+				if state.out != nil do (^T)(state.out)^ = result.value
+				if state.out_ok != nil do state.out_ok^ = result.ok
 				return true
 			}
 
 			return false
 		},
 		complete = proc(self: ^Case, ok: bool) {
-			out_ok := get(self, .Out_Ok, ^bool)
-			if out_ok != nil do out_ok^ = ok
+			state := load_inline(&self.ud, Case_State(T))
+			if state.out_ok != nil do state.out_ok^ = ok
 		},
 		subscribe = proc(self: ^Case, handle: Handle, case_idx: int) {
+			state := load_inline(&self.ud, Case_State(T))
 			waiter := Waiter {
 				handle   = handle,
-				dest_ptr = get(self, .Out, ^T),
+				dest_ptr = state.out,
 				case_idx = case_idx,
 			}
-			receivers := get(self, .Receivers, ^queue.Queue(Waiter))
-			queue.enqueue(receivers, waiter)
+			queue.enqueue(state.receivers, waiter)
 		},
 		unsubscribe = proc(self: ^Case, handle: Handle) {
-			receivers := get(self, .Receivers, ^queue.Queue(Waiter))
-			size := receivers.len
+			state := load_inline(&self.ud, Case_State(T))
+			size := state.receivers.len
 			for _ in 0 ..< size {
-				waiter := queue.pop_front(receivers)
-				if waiter.handle != handle do queue.enqueue(receivers, waiter)
+				waiter := queue.pop_front(state.receivers)
+				if waiter.handle != handle do queue.enqueue(state.receivers, waiter)
 			}
 		},
 	}
