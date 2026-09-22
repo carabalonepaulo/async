@@ -11,6 +11,13 @@ Inner_One_Shot :: struct {
 	case_idx: int,
 }
 
+@(private = "file")
+Inner_Inline_One_Shot :: struct($T: typeid) {
+	value:    Maybe(T),
+	handle:   Maybe(Handle),
+	case_idx: int,
+}
+
 One_Shot :: struct($T: typeid) {
 	id:      u64,
 	_marker: [0]T,
@@ -19,9 +26,6 @@ One_Shot :: struct($T: typeid) {
 create_one_shot :: proc($T: typeid) -> One_Shot(T) {
 	res := Resource{}
 	res.id = auto_cast Internal_Resource.One_Shot
-
-	inner := load_inline(&res.ud, Inner_One_Shot)
-	inner.value = nil
 
 	sched := get_scheduler()
 	id := storage.add(&sched.resources, res)
@@ -33,24 +37,37 @@ one_shot_destroy :: proc(self: One_Shot($T)) {
 	res, ok := storage.remove(&sched.resources, self.id)
 	assert(ok, "invalid one shot")
 
-	inner := load_inline(&res.ud, Inner_One_Shot)
-	if handle, handle_ok := inner.handle.(Handle); handle_ok {
-		if inner.case_idx == -1 do wake(handle)
-		else do wake_case(handle, inner.case_idx, false)
+	raw_inner: rawptr
+	when (size_of(Inner_Inline_One_Shot(T)) <= RESOURCE_INLINE_STORAGE * size_of(rawptr) &&
+		align_of(Inner_Inline_One_Shot(T)) <= align_of(rawptr)) {
+		raw_inner = load_inline(&res.ud, Inner_Inline_One_Shot(T))
+	} else {
+		inner := load_inline(&res.ud, Inner_One_Shot)
+		if inner.value != nil do free((^T)(inner.value), allocator = runtime.default_allocator())
+		raw_inner = inner
 	}
-	if inner.value != nil do free((^T)(inner.value), allocator = runtime.default_allocator())
+
+	internal_wake(raw_inner, T, false)
 }
 
 one_shot_try_send :: proc(self: One_Shot($T), value: T) -> (ok: bool) {
-	inner := try_get_inner(self) or_return
-	if inner.value != nil do return false
+	raw_inner: rawptr
+	defer if ok do internal_wake(raw_inner, T, true)
 
-	inner.value = new(T, allocator = runtime.default_allocator())
-	(^T)(inner.value)^ = value
+	when (size_of(Inner_Inline_One_Shot(T)) <= RESOURCE_INLINE_STORAGE * size_of(rawptr) &&
+		align_of(Inner_Inline_One_Shot(T)) <= align_of(rawptr)) {
+		inner := try_get_inner(self, Inner_Inline_One_Shot(T)) or_return
+		if _, ok := inner.value.(T); ok do return false
+		raw_inner = inner
 
-	if handle, handle_ok := inner.handle.(Handle); handle_ok {
-		if inner.case_idx == -1 do wake(handle)
-		else do wake_case(handle, inner.case_idx, true)
+		inner.value = value
+	} else {
+		inner := try_get_inner(self, Inner_One_Shot) or_return
+		if inner.value != nil do return false
+		raw_inner = inner
+
+		inner.value = new(T, allocator = runtime.default_allocator())
+		(^T)(inner.value)^ = value
 	}
 
 	return true
@@ -62,38 +79,28 @@ one_shot_send :: proc(self: One_Shot($T), value: T) {
 }
 
 one_shot_try_recv :: proc(self: One_Shot($T)) -> (value: T, ok: bool) {
-	inner := try_get_inner(self) or_return
-	if inner.value == nil do return {}, false
+	defer if ok do one_shot_destroy(self)
 
-	value = (^T)(inner.value)^
-	ok = true
-	one_shot_destroy(self)
+	raw_inner := try_get_raw_inner(self) or_return
+	value, ok = get_value(raw_inner, T)
+
 	return
 }
 
 one_shot_recv :: proc(self: One_Shot($T)) -> (value: T, ok: bool) {
-	inner := get_inner(self)
+	defer if ok do one_shot_destroy(self)
 
-	if inner.value != nil {
-		value = (^T)(inner.value)^
-		ok = true
-		one_shot_destroy(self)
-		return
-	}
+	raw_inner := try_get_raw_inner(self) or_return
+	value, ok = get_value(raw_inner, T)
+	if ok do return
 
-	inner.handle = get_handle()
-	inner.case_idx = -1
-
+	set_both(raw_inner, T, get_handle(), -1, false)
 	yield()
+	_ = storage.get_ptr(&get_scheduler().resources, self.id) or_return
+	set_both(raw_inner, T, nil, 0, false)
 
-	inner = try_get_inner(self) or_return
-	inner.handle = nil
-	inner.case_idx = 0
+	value, ok = get_value(raw_inner, T)
 
-	value = (^T)(inner.value)^
-	ok = true
-
-	one_shot_destroy(self)
 	return
 }
 
@@ -136,39 +143,109 @@ one_shot_branch :: proc(self: One_Shot($T), out: ^T, out_ok: ^bool) -> Case {
 			get(self, .Out_Ok, ^bool)^ = ok
 			if ok {
 				os := get_one_shot(self)
-				inner := get_inner(os)
-				get(self, .Out, ^T)^ = (^T)(inner.value)^
+				raw_inner := get_raw_inner(os)
+				get(self, .Out, ^T)^ = get_value(raw_inner, T)
 				one_shot_destroy(os)
 			}
 		},
 		subscribe = proc(self: ^Case, handle: Handle, case_idx: int) {
 			os := get_one_shot(self)
-			inner := get_inner(os)
-			assert(inner.handle == nil)
-			inner.handle = handle
-			inner.case_idx = case_idx
+			raw_inner := get_raw_inner(os)
+			set_both(raw_inner, T, handle, case_idx, true)
 		},
 		unsubscribe = proc(self: ^Case, handle: Handle) {
 			os := get_one_shot(self)
-			inner := get_inner(os)
-			inner.handle = nil
-			inner.case_idx = 0
+			raw_inner := get_raw_inner(os)
+			set_both(raw_inner, T, nil, 0, false)
 		},
 	}
 }
 
-@(private = "file")
-try_get_inner :: proc(self: One_Shot($T)) -> (inner: ^Inner_One_Shot, ok: bool) {
-	sched := get_scheduler()
-	res := storage.get_ptr(&sched.resources, self.id) or_return
-	return load_inline(&res.ud, Inner_One_Shot), true
+is_inline :: proc(self: One_Shot($T)) -> bool {
+	return(
+		size_of(Inner_Inline_One_Shot(T)) <= RESOURCE_INLINE_STORAGE * size_of(rawptr) &&
+		align_of(Inner_Inline_One_Shot(T)) <= align_of(rawptr) \
+	)
 }
 
 @(private = "file")
-get_inner :: proc(self: One_Shot($T)) -> ^Inner_One_Shot {
-	inner, ok := try_get_inner(self)
+try_get_inner :: proc(self: One_Shot($T), $O: typeid) -> (inner: ^O, ok: bool) {
+	sched := get_scheduler()
+	res := storage.get_ptr(&sched.resources, self.id) or_return
+	return load_inline(&res.ud, O), true
+}
+
+@(private = "file")
+try_get_raw_inner :: proc(self: One_Shot($T)) -> (raw: rawptr, ok: bool) #optional_ok {
+	when (size_of(Inner_Inline_One_Shot(T)) <= RESOURCE_INLINE_STORAGE * size_of(rawptr) &&
+		align_of(Inner_Inline_One_Shot(T)) <= align_of(rawptr)) {
+		return try_get_inner(self, Inner_Inline_One_Shot(T))
+	} else {
+		return try_get_inner(self, Inner_One_Shot)
+	}
+}
+
+@(private = "file")
+get_raw_inner :: proc(self: One_Shot($T)) -> rawptr {
+	ptr, ok := try_get_raw_inner(self)
 	assert(ok, "invalid one shot")
-	return inner
+	return ptr
+}
+
+@(private = "file")
+get_both :: proc(raw_inner: rawptr, $T: typeid) -> (^Maybe(Handle), ^int) {
+	when (size_of(Inner_Inline_One_Shot(T)) <= RESOURCE_INLINE_STORAGE * size_of(rawptr) &&
+		align_of(Inner_Inline_One_Shot(T)) <= align_of(rawptr)) {
+		inner := (^Inner_Inline_One_Shot(T))(raw_inner)
+		return &inner.handle, &inner.case_idx
+	} else {
+		inner := (^Inner_One_Shot)(raw_inner)
+		return &inner.handle, &inner.case_idx
+	}
+}
+
+@(private = "file")
+get_value :: proc(raw_inner: rawptr, $T: typeid) -> (value: T, ok: bool) #optional_ok {
+	when (size_of(Inner_Inline_One_Shot(T)) <= RESOURCE_INLINE_STORAGE * size_of(rawptr) &&
+		align_of(Inner_Inline_One_Shot(T)) <= align_of(rawptr)) {
+		inner := (^Inner_Inline_One_Shot(T))(raw_inner)
+		value, ok = inner.value.(T)
+		return
+	} else {
+		inner := (^Inner_One_Shot)(raw_inner)
+		if inner.value == nil do return {}, false
+		return (^T)(inner.value)^, true
+	}
+}
+
+@(private = "file")
+set_both :: proc(
+	inner: rawptr,
+	$T: typeid,
+	handle: Maybe(Handle),
+	case_idx: int,
+	$ensure_no_handle: bool,
+) {
+	when (size_of(Inner_Inline_One_Shot(T)) <= RESOURCE_INLINE_STORAGE * size_of(rawptr) &&
+		align_of(Inner_Inline_One_Shot(T)) <= align_of(rawptr)) {
+		inner := (^Inner_Inline_One_Shot(T))(inner)
+		when ensure_no_handle do assert(inner.handle == nil)
+		inner.handle = handle
+		inner.case_idx = case_idx
+	} else {
+		inner := (^Inner_One_Shot)(inner)
+		inner.handle = handle
+		inner.case_idx = case_idx
+	}
+}
+
+@(private = "file")
+internal_wake :: #force_inline proc(self: rawptr, $T: typeid, ok: bool) {
+	handle, case_idx := get_both(self, T)
+	if handle, handle_ok := (handle^).(Handle); handle_ok {
+		if case_idx^ == -1 do wake(handle)
+		else do wake_case(handle, case_idx^, ok)
+	}
 }
 
 @(test)

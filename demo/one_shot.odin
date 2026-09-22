@@ -4,21 +4,28 @@ import "../async"
 import "core:fmt"
 import "core:time"
 
+Giga_Type :: struct {
+	n:   int,
+	buf: [1024]u8,
+}
+
 one_shot_demo :: proc() {
 	a := async.spawn(proc() {
 		b := async.spawn(proc() {
-			os := async.create_one_shot(int)
-			async.spawn(os, proc(os: async.One_Shot(int)) {
-				fmt.println("[one shot b] send(123)")
-				async.send(os, 123)
+			os := async.create_one_shot(Giga_Type)
+			fmt.printfln("[one shot] One_Shot(Giga_Type) / inline: %v", async.is_inline(os))
 
-				fmt.printfln("[one shot b] try_send(456) == %v", async.try_send(os, 456))
+			async.spawn(os, proc(os: async.One_Shot(Giga_Type)) {
+				fmt.println("[one shot b] send(123)")
+				async.send(os, Giga_Type{n = 123})
+
+				fmt.printfln("[one shot b] try_send(456) == %v", async.try_send(os, Giga_Type{n = 456}))
 			})
 
 			fmt.println("[one shot b] before")
 
 			value, value_ok := async.recv(os)
-			fmt.println("[one shot b] after:", value, value_ok)
+			fmt.println("[one shot b] after:", value.n, value_ok)
 
 			value, value_ok = async.try_recv(os)
 			fmt.printfln("[one shot b] try_send == %v", value_ok)
@@ -26,6 +33,8 @@ one_shot_demo :: proc() {
 
 		c := async.spawn(proc() {
 			os := async.create_one_shot(int)
+			fmt.printfln("[one shot] One_Shot(int) / inline: %v", async.is_inline(os))
+
 			async.spawn(os, proc(os: async.One_Shot(int)) {
 				fmt.println("[one shot c] send(123)")
 				async.send(os, 123)
