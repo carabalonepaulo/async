@@ -143,7 +143,9 @@ create_read_dir :: proc(path: string) -> (it: Read_Dir, ok: bool) {
 }
 
 destroy_read_dir :: proc(it: ^Read_Dir) {
-	os.read_directory_iterator_destroy((^os.Read_Directory_Iterator)(it))
+	raw := (^os.Read_Directory_Iterator)(it)
+	os.close(raw.f)
+	os.read_directory_iterator_destroy(raw)
 }
 
 read_dir :: proc(it: ^Read_Dir) -> (os.File_Info, int, bool) {
