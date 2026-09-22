@@ -1,6 +1,8 @@
 package async_io
 
 import ".."
+import "core:os"
+import "core:testing"
 
 import "core:nbio"
 import "core:time"
@@ -123,5 +125,33 @@ stat :: proc(handle: Handle) -> (File_Type, i64, FS_Error) {
 	store_handle(op)
 	res := async.recv(Stat_Result)
 	return res.type, res.size, res.err
+}
+
+Read_Dir :: distinct os.Read_Directory_Iterator
+
+create_read_dir :: proc(path: string) -> (it: Read_Dir, ok: bool) {
+	file, err := os.open(path, {.Read})
+	if err != nil do return {}, false
+
+	raw_it := os.read_directory_iterator_create(file)
+	if raw_it.err.err != nil {
+		os.close(file)
+		return {}, false
+	}
+
+	return Read_Dir(raw_it), true
+}
+
+destroy_read_dir :: proc(it: ^Read_Dir) {
+	os.read_directory_iterator_destroy((^os.Read_Directory_Iterator)(it))
+}
+
+read_dir :: proc(it: ^Read_Dir) -> (os.File_Info, int, bool) {
+	async.reschedule()
+	return os.read_directory_iterator((^os.Read_Directory_Iterator)(it))
+}
+
+read_dir_error :: proc(it: ^Read_Dir) -> (string, os.Error) {
+	return os.read_directory_iterator_error((^os.Read_Directory_Iterator)(it))
 }
 

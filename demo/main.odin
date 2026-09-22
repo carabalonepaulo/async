@@ -41,6 +41,7 @@ main :: proc() {
 	// http_server_demo()
 	sock_demo()
 	fs_demo()
+	read_dir_demo()
 	signal_demo()
 	select_demo()
 	ch_producer_consumer_demo()
