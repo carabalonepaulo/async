@@ -2,7 +2,7 @@ package async
 
 import "storage"
 
-@(private)
+@(private = "file")
 Inner_Wait_Group :: struct {
 	count:  int,
 	waiter: Maybe(Handle),
@@ -11,9 +11,6 @@ Inner_Wait_Group :: struct {
 Wait_Group :: distinct u64
 
 create_wait_group :: proc() -> Wait_Group {
-	#assert(size_of([MAX_USER_DATA]rawptr) >= size_of(Inner_Wait_Group))
-	#assert(align_of([MAX_USER_DATA]rawptr) >= align_of(Inner_Wait_Group))
-
 	sched := get_scheduler()
 	id := storage.add(&sched.resources, Resource{})
 	return Wait_Group(id)
@@ -59,13 +56,6 @@ get_inner :: proc(self: Wait_Group) -> ^Inner_Wait_Group {
 	sched := get_scheduler()
 	res, ok := storage.get_ptr(&sched.resources, transmute(u64)(self))
 	assert(ok, "invalid wait group")
-	return resource_as_inner(res)
-}
-
-@(private = "file")
-resource_as_inner :: proc(res: ^Resource) -> ^Inner_Wait_Group {
-	#assert(size_of([MAX_USER_DATA]rawptr) >= size_of(Inner_Wait_Group))
-	#assert(align_of([MAX_USER_DATA]rawptr) >= align_of(Inner_Wait_Group))
-	return transmute(^Inner_Wait_Group)(&res.ud[0])
+	return load_inline(&res.ud, Inner_Wait_Group)
 }
 

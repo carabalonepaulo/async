@@ -21,18 +21,15 @@ Semaphore :: distinct u64
 create_semaphore :: proc(n: int) -> Semaphore {
 	assert(n > 0, "semaphore count must be positive")
 
-	inner := new(Inner_Semaphore)
+	res := Resource {
+		id = auto_cast Internal_Resource.Semaphore,
+	}
+
+	inner := load_inline(&res.ud, Inner_Semaphore)
 	inner.n = n
 	inner.cap = n
 	queue.init(&inner.waiters)
 
-	ud := [MAX_USER_DATA]rawptr{}
-	ud[0] = inner
-
-	res := Resource {
-		id = auto_cast Internal_Resource.Semaphore,
-		ud = ud,
-	}
 	sched := get_scheduler()
 	id := storage.add(&sched.resources, res)
 	return Semaphore(id)
@@ -43,7 +40,7 @@ semaphore_destroy :: proc(self: Semaphore) {
 	res, ok := storage.remove(&sched.resources, u64(self))
 	assert(ok, "invalid semaphore")
 
-	inner := (^Inner_Semaphore)(res.ud[0])
+	inner := load_inline(&res.ud, Inner_Semaphore)
 	for queue.len(inner.waiters) > 0 {
 		waiter := queue.pop_front(&inner.waiters)
 		if waiter.case_idx == -1 do send(waiter.handle, false)
@@ -51,7 +48,6 @@ semaphore_destroy :: proc(self: Semaphore) {
 	}
 
 	queue.destroy(&inner.waiters)
-	free(inner)
 }
 
 try_acquire :: proc(self: Semaphore) -> bool {
@@ -104,7 +100,7 @@ semaphore_branch :: proc(self: Semaphore, out_ok: ^bool) -> Case {
 		return transmute(A)(self.ud[ud])
 	}
 
-	ud := [MAX_USER_DATA]rawptr{}
+	ud := [CASE_INLINE_STORAGE]rawptr{}
 	ud[User_Data.Id] = transmute(rawptr)(self)
 	ud[User_Data.Out_Ok] = out_ok
 
@@ -158,7 +154,7 @@ _guard :: proc(self: Semaphore, _: Maybe(Cancel_Token), ok: bool) {
 try_get_inner :: proc(self: Semaphore) -> (inner: ^Inner_Semaphore, ok: bool) {
 	sched := get_scheduler()
 	res := storage.get_ptr(&sched.resources, u64(self)) or_return
-	return (^Inner_Semaphore)(res.ud[0]), true
+	return load_inline(&res.ud, Inner_Semaphore), true
 }
 
 @(private = "file")

@@ -12,13 +12,13 @@ Waiter :: struct {
 	case_idx: int,
 }
 
-@(private)
+@(private = "file")
 Result :: struct($T: typeid) {
 	value: T,
 	ok:    bool,
 }
 
-@(private)
+@(private = "file")
 Inner_Chan :: struct($T: typeid) {
 	receivers: queue.Queue(Waiter),
 	items:     queue.Queue(Result(T)),
@@ -30,14 +30,14 @@ Chan :: struct($T: typeid) {
 }
 
 create_chan :: proc($T: typeid, cap := 16) -> Chan(T) {
-	inner := new(Inner_Chan(T))
-	queue.init(&inner.receivers, 1)
-	queue.init(&inner.items, cap)
-
 	sched := get_scheduler()
 	res := Resource{}
 	res.id = auto_cast Internal_Resource.Channel
-	res.ud[0] = inner
+
+	inner := load_inline(&res.ud, Inner_Chan(T))
+	queue.init(&inner.receivers, 1)
+	queue.init(&inner.items, cap)
+
 	id := storage.add(&sched.resources, res)
 	return Chan(T){id = id}
 }
@@ -47,7 +47,7 @@ chan_destroy :: proc(self: Chan($T)) {
 	res, ok := storage.remove(&sched.resources, self.id)
 	if !ok do return
 
-	inner := (^Inner_Chan(T))(res.ud[0])
+	inner := load_inline(&res.ud, Inner_Chan(T))
 	for inner.receivers.len > 0 {
 		waiter := queue.pop_front(&inner.receivers)
 		if waiter.case_idx == -1 do send(waiter.handle, Result(T){ok = false})
@@ -58,8 +58,6 @@ chan_destroy :: proc(self: Chan($T)) {
 
 	queue.destroy(&inner.receivers)
 	queue.destroy(&inner.items)
-
-	free(inner)
 }
 
 chan_try_send :: proc(self: Chan($T), value: T) -> bool {
@@ -162,7 +160,7 @@ chan_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
 		receivers = &inner.receivers
 	}
 
-	ud := [MAX_USER_DATA]rawptr{}
+	ud := [CASE_INLINE_STORAGE]rawptr{}
 	ud[User_Data.Id] = transmute(rawptr)(id)
 	ud[User_Data.Receivers] = receivers
 	ud[User_Data.Out] = out
@@ -238,7 +236,7 @@ get_inner :: proc(chan: Chan($T)) -> ^Inner_Chan(T) {
 	sched := get_scheduler()
 	res, ok := storage.get_ptr(&sched.resources, chan.id)
 	if !ok do return nil
-	return (^Inner_Chan(T))(res.ud[0])
+	return load_inline(&res.ud, Inner_Chan(T))
 }
 
 chan_into_rawptr :: #force_inline proc(self: Chan($T)) -> rawptr {

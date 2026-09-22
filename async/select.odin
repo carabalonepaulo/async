@@ -8,7 +8,7 @@ import "storage"
 
 @(private)
 Case :: struct {
-	ud:          [MAX_USER_DATA]rawptr,
+	ud:          [CASE_INLINE_STORAGE]rawptr,
 	is_alive:    proc(self: ^Case) -> bool,
 	try:         proc(self: ^Case) -> bool,
 	complete:    proc(self: ^Case, ok: bool),

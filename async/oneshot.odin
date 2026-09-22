@@ -20,7 +20,7 @@ create_one_shot :: proc($T: typeid) -> One_Shot(T) {
 	res := Resource{}
 	res.id = auto_cast Internal_Resource.One_Shot
 
-	inner := resource_as_inner(&res)
+	inner := load_inline(&res.ud, Inner_One_Shot)
 	inner.value = nil
 
 	sched := get_scheduler()
@@ -33,7 +33,7 @@ one_shot_destroy :: proc(self: One_Shot($T)) {
 	res, ok := storage.remove(&sched.resources, self.id)
 	assert(ok, "invalid one shot")
 
-	inner := resource_as_inner(&res)
+	inner := load_inline(&res.ud, Inner_One_Shot)
 	if handle, handle_ok := inner.handle.(Handle); handle_ok {
 		if inner.case_idx == -1 do wake(handle)
 		else do wake_case(handle, inner.case_idx, false)
@@ -112,7 +112,7 @@ one_shot_branch :: proc(self: One_Shot($T), out: ^T, out_ok: ^bool) -> Case {
 		return One_Shot(T){id = get(self, .Id, u64)}
 	}
 
-	ud := [MAX_USER_DATA]rawptr{}
+	ud := [CASE_INLINE_STORAGE]rawptr{}
 	ud[User_Data.Id] = transmute(rawptr)(self.id)
 	ud[User_Data.Out] = out
 	ud[User_Data.Out_Ok] = out_ok
@@ -161,7 +161,7 @@ one_shot_branch :: proc(self: One_Shot($T), out: ^T, out_ok: ^bool) -> Case {
 try_get_inner :: proc(self: One_Shot($T)) -> (inner: ^Inner_One_Shot, ok: bool) {
 	sched := get_scheduler()
 	res := storage.get_ptr(&sched.resources, self.id) or_return
-	return resource_as_inner(res), true
+	return load_inline(&res.ud, Inner_One_Shot), true
 }
 
 @(private = "file")
@@ -169,13 +169,6 @@ get_inner :: proc(self: One_Shot($T)) -> ^Inner_One_Shot {
 	inner, ok := try_get_inner(self)
 	assert(ok, "invalid one shot")
 	return inner
-}
-
-@(private = "file")
-resource_as_inner :: proc(res: ^Resource) -> ^Inner_One_Shot {
-	#assert(size_of([MAX_USER_DATA]rawptr) >= size_of(Inner_One_Shot))
-	#assert(align_of([MAX_USER_DATA]rawptr) >= align_of(Inner_One_Shot))
-	return transmute(^Inner_One_Shot)(&res.ud[0])
 }
 
 @(test)

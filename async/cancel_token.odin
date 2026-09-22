@@ -26,11 +26,11 @@ create_cancel_token :: proc() -> Cancel_Token {
 	res := Resource {
 		id = auto_cast Internal_Resource.Cancel_Token,
 		drop = proc(self: ^Resource) {
-			inner := resource_as_inner(self)
+			inner := load_inline(&self.ud, Inner_Cancel_Token)
 			delete(inner.waiters)
 		},
 	}
-	inner := resource_as_inner(&res)
+	inner := load_inline(&res.ud, Inner_Cancel_Token)
 	inner.waiters = make(map[Handle]Waiter, DEFAULT_WAITERS_CAP)
 
 	sched := get_scheduler()
@@ -43,7 +43,7 @@ destroy_cancel_token :: proc(self: Cancel_Token) {
 	res, ok := storage.remove(&sched.resources, u64(self))
 	assert(ok, "invalid cancel token")
 
-	inner := resource_as_inner(&res)
+	inner := load_inline(&res.ud, Inner_Cancel_Token)
 	for _, waiter in inner.waiters {
 		if waiter.case_idx == -1 do wake(waiter.handle)
 		else do wake_case(waiter.handle, waiter.case_idx, false)
@@ -74,7 +74,7 @@ cancel_token_wait :: proc(self: Cancel_Token) {
 }
 
 cancel_token_branch :: proc(self: Cancel_Token) -> (c: Case) {
-	ud := [MAX_USER_DATA]rawptr{}
+	ud := [CASE_INLINE_STORAGE]rawptr{}
 	ud[0] = transmute(rawptr)(self)
 
 	return Case {
@@ -104,7 +104,7 @@ cancel_token_branch :: proc(self: Cancel_Token) -> (c: Case) {
 try_get_inner :: proc(self: Cancel_Token) -> (inner: ^Inner_Cancel_Token, ok: bool) {
 	sched := get_scheduler()
 	res := storage.get_ptr(&sched.resources, u64(self)) or_return
-	return resource_as_inner(res), true
+	return load_inline(&res.ud, Inner_Cancel_Token), true
 }
 
 @(private = "file")
@@ -112,13 +112,6 @@ get_inner :: proc(self: Cancel_Token) -> ^Inner_Cancel_Token {
 	inner, ok := try_get_inner(self)
 	assert(ok, "invalid cancel token")
 	return inner
-}
-
-@(private = "file")
-resource_as_inner :: proc(res: ^Resource) -> ^Inner_Cancel_Token {
-	#assert(size_of([MAX_USER_DATA]rawptr) >= size_of(Inner_Cancel_Token))
-	#assert(align_of([MAX_USER_DATA]rawptr) >= align_of(Inner_Cancel_Token))
-	return transmute(^Inner_Cancel_Token)(&res.ud[0])
 }
 
 cancel_token_into_rawptr :: #force_inline proc(self: Cancel_Token) -> rawptr {

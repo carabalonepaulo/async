@@ -13,7 +13,10 @@ import "storage"
 import tw "time_wheel"
 
 INITIAL_CAPACITY :: #config(ASYNC_INITIAL_CAPACITY, 64)
-MAX_USER_DATA :: #config(ASYNC_MAX_USER_DATA, 8)
+
+COROUTINE_INLINE_STORAGE :: 8
+RESOURCE_INLINE_STORAGE :: 16
+CASE_INLINE_STORAGE :: 5
 
 DEFAULT_STACK_SIZE :: #config(ASYNC_DEFAULT_STACK_SIZE, 64 * mem.Kilobyte)
 DEFAULT_STORAGE_SIZE :: #config(ASYNC_DEFAULT_STORAGE_SIZE, 256)
@@ -29,7 +32,7 @@ Internal_Resource :: enum {
 
 Resource :: struct {
 	id:   int,
-	ud:   [MAX_USER_DATA]rawptr,
+	ud:   [RESOURCE_INLINE_STORAGE]rawptr,
 	drop: proc(self: ^Resource),
 }
 
@@ -52,7 +55,7 @@ Internal_State :: struct {
 	id:        u64,
 	queued:    bool,
 	allocator: mem.Allocator,
-	ud:        [MAX_USER_DATA]rawptr,
+	ud:        [COROUTINE_INLINE_STORAGE]rawptr,
 	hooks:     [Hook]Closure,
 }
 
@@ -207,7 +210,7 @@ poll :: proc() {
 	if builtin.len(scheduler.finished) > 0 {
 		for id in scheduler.finished {
 			if res, ok := storage.remove(&scheduler.resources, id); ok {
-				closure := resource_as_closure(&res)
+				closure := load_inline(&res.ud, Closure)
 				closure.fn(closure.ud)
 			}
 		}
@@ -251,7 +254,7 @@ timer :: proc(n: time.Duration, fn: proc(ud: rawptr), ud: rawptr = nil) -> u64 {
 		id = auto_cast Internal_Resource.Timer,
 		drop = proc(self: ^Resource) {},
 	}
-	resource_as_closure(&res)^ = Closure{ud, fn}
+	load_inline(&res.ud, Closure)^ = Closure{ud, fn}
 	id := storage.add(&scheduler.resources, res)
 	tw.after(&scheduler.time_wheel, n, tw.Task(id))
 	return id
@@ -400,10 +403,15 @@ call_hook :: proc(state: ^Internal_State, hook: Hook) {
 	if closure.fn != nil do closure.fn(closure.ud)
 }
 
-@(private)
-resource_as_closure :: proc(res: ^Resource) -> ^Closure {
-	#assert(size_of([MAX_USER_DATA]rawptr) >= size_of(Closure))
-	#assert(align_of([MAX_USER_DATA]rawptr) >= align_of(Closure))
-	return transmute(^Closure)(&res.ud[0])
+load_inline :: #force_inline proc(storage: ^[$N]rawptr, $T: typeid) -> ^T {
+	#assert(size_of(T) <= N * size_of(rawptr))
+	#assert(align_of(T) <= align_of(rawptr))
+	return (^T)(&storage[0])
+}
+
+store_inline :: #force_inline proc(storage: ^[$N]rawptr, value: $T) {
+	#assert(size_of(T) <= N * size_of(rawptr))
+	#assert(align_of(T) <= align_of(rawptr))
+	(^T)(&storage[0])^ = value
 }
 
