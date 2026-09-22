@@ -74,8 +74,11 @@ cancel_token_wait :: proc(self: Cancel_Token) {
 }
 
 cancel_token_branch :: proc(self: Cancel_Token) -> (c: Case) {
+	ud := [MAX_USER_DATA]rawptr{}
+	ud[0] = transmute(rawptr)(self)
+
 	return Case {
-		ud = [MAX_USER_DATA]rawptr{transmute(rawptr)(self), nil, nil, nil, nil},
+		ud = ud, //
 		is_alive = proc(self: ^Case) -> bool {
 			id := transmute(u64)(self.ud[0])
 			sched := get_scheduler()

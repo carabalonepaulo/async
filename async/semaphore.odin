@@ -26,9 +26,12 @@ create_semaphore :: proc(n: int) -> Semaphore {
 	inner.cap = n
 	queue.init(&inner.waiters)
 
+	ud := [MAX_USER_DATA]rawptr{}
+	ud[0] = inner
+
 	res := Resource {
 		id = auto_cast Internal_Resource.Semaphore,
-		ud = [MAX_USER_DATA]rawptr{inner, nil, nil, nil, nil},
+		ud = ud,
 	}
 	sched := get_scheduler()
 	id := storage.add(&sched.resources, res)
@@ -101,8 +104,12 @@ semaphore_branch :: proc(self: Semaphore, out_ok: ^bool) -> Case {
 		return transmute(A)(self.ud[ud])
 	}
 
+	ud := [MAX_USER_DATA]rawptr{}
+	ud[User_Data.Id] = transmute(rawptr)(self)
+	ud[User_Data.Out_Ok] = out_ok
+
 	return Case {
-		ud = [MAX_USER_DATA]rawptr{transmute(rawptr)(self), out_ok, nil, nil, nil},
+		ud = ud, //
 		is_alive = proc(self: ^Case) -> bool {
 			id := get(self, .Id, u64)
 			sched := get_scheduler()

@@ -112,8 +112,13 @@ one_shot_branch :: proc(self: One_Shot($T), out: ^T, out_ok: ^bool) -> Case {
 		return One_Shot(T){id = get(self, .Id, u64)}
 	}
 
+	ud := [MAX_USER_DATA]rawptr{}
+	ud[User_Data.Id] = transmute(rawptr)(self.id)
+	ud[User_Data.Out] = out
+	ud[User_Data.Out_Ok] = out_ok
+
 	return Case {
-		ud = [MAX_USER_DATA]rawptr{transmute(rawptr)(self.id), out, out_ok, nil, nil},
+		ud = ud, //
 		is_alive = proc(self: ^Case) -> bool {
 			id := get(self, .Id, u64)
 			sched := get_scheduler()

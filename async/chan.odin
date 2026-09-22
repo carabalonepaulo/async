@@ -162,8 +162,14 @@ chan_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
 		receivers = &inner.receivers
 	}
 
+	ud := [MAX_USER_DATA]rawptr{}
+	ud[User_Data.Id] = transmute(rawptr)(id)
+	ud[User_Data.Receivers] = receivers
+	ud[User_Data.Out] = out
+	ud[User_Data.Out_Ok] = out_ok
+
 	return Case {
-		ud = [MAX_USER_DATA]rawptr{transmute(rawptr)(id), receivers, out, out_ok, nil},
+		ud = ud, //
 		is_alive = proc(self: ^Case) -> bool {
 			id := get(self, .Id, u64)
 			return is_chan_alive(id)
