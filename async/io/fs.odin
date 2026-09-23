@@ -32,6 +32,7 @@ open :: proc(
 	mode: bit_set[File_Flag;int] = {.Read},
 	perm: Permissions = Permissions_Default_File,
 	dir: nbio.Handle = nbio.CWD,
+	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> (
 	Handle,
 	FS_Error,
@@ -39,12 +40,25 @@ open :: proc(
 	os := async.create_one_shot(Open_Result)
 	cb := proc(op: ^nbio.Operation) {
 		os := transmute(async.One_Shot(Open_Result))(op.user_data[0])
-		async.send(os, Open_Result{op.open.handle, op.open.err})
+		if was_cancelled(op.user_data[1]) {
+			async.destroy(os)
+			if op.open.err == nil do nbio.close(op.open.handle)
+		} else do async.send(os, Open_Result{op.open.handle, op.open.err})
 	}
 	op := nbio.open(path, cb, mode, perm, dir)
 	op.user_data[0] = transmute(rawptr)(os)
-	res, _ := async.recv(os)
-	return res.handle, res.err
+
+	if cancel, cancel_ok := cancel.(async.Cancel_Token); cancel_ok {
+		op.user_data[1] = transmute(rawptr)(cancel)
+
+		res: Open_Result
+		idx := async.select({async.branch(cancel), async.branch(os, &res)})
+		if idx == 0 do return 0, .Timeout
+		else do return res.handle, res.err
+	} else {
+		res := async.recv(os)
+		return res.handle, res.err
+	}
 }
 
 read :: proc(
@@ -52,17 +66,28 @@ read :: proc(
 	offset: int,
 	buf: []u8,
 	all := false,
-	timeout: time.Duration = NO_TIMEOUT,
+	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> FS_Error {
 	os := async.create_one_shot(FS_Error)
 	cb := proc(op: ^nbio.Operation) {
 		os := transmute(async.One_Shot(FS_Error))(op.user_data[0])
 		async.send(os, op.read.err)
 	}
-	op := nbio.read(handle, offset, buf, cb, all, timeout)
+	op := nbio.read(handle, offset, buf, cb, all, nbio.NO_TIMEOUT)
 	op.user_data[0] = transmute(rawptr)(os)
-	res, _ := async.recv(os)
-	return res
+
+	if cancel, cancel_ok := cancel.(async.Cancel_Token); cancel_ok {
+		res: FS_Error
+		idx := async.select({async.branch(cancel), async.branch(os, &res)})
+		if idx == 0 {
+			nbio.remove(op)
+			async.destroy(os)
+			return .Timeout
+		} else do return res
+	} else {
+		res := async.recv(os)
+		return res
+	}
 }
 
 @(private)
@@ -86,7 +111,7 @@ read_entire_file :: proc(
 		async.send(os, Read_Entire_File_Result{data, err})
 	}
 	nbio.read_entire_file(path, transmute(rawptr)(os), cb, allocator, dir, nil, loc)
-	res, _ := async.recv(os)
+	res, ok := async.recv(os)
 	return res.buf, res.err
 }
 
@@ -101,7 +126,7 @@ write :: proc(
 	offset: int,
 	buf: []u8,
 	all := true,
-	timeout: time.Duration = NO_TIMEOUT,
+	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> (
 	int,
 	FS_Error,
@@ -111,10 +136,21 @@ write :: proc(
 		os := transmute(async.One_Shot(Write_Result))(op.user_data[0])
 		async.send(os, Write_Result{op.write.written, op.write.err})
 	}
-	op := nbio.write(handle, offset, buf, cb, all, timeout)
+	op := nbio.write(handle, offset, buf, cb, all, nbio.NO_TIMEOUT)
 	op.user_data[0] = transmute(rawptr)(os)
-	res, _ := async.recv(os)
-	return res.written, res.err
+
+	if cancel, cancel_ok := cancel.(async.Cancel_Token); cancel_ok {
+		res: Write_Result
+		idx := async.select({async.branch(cancel), async.branch(os, &res)})
+		if idx == 0 {
+			nbio.remove(op)
+			async.destroy(os)
+			return 0, .Timeout
+		} else do return res.written, res.err
+	} else {
+		res := async.recv(os)
+		return res.written, res.err
+	}
 }
 
 @(private)
@@ -124,7 +160,14 @@ Stat_Result :: struct {
 	err:  FS_Error,
 }
 
-stat :: proc(handle: Handle) -> (File_Type, i64, FS_Error) {
+stat :: proc(
+	handle: Handle,
+	cancel: Maybe(async.Cancel_Token) = nil,
+) -> (
+	File_Type,
+	i64,
+	FS_Error,
+) {
 	os := async.create_one_shot(Stat_Result)
 	cb := proc(op: ^nbio.Operation) {
 		os := transmute(async.One_Shot(Stat_Result))(op.user_data[0])
@@ -132,8 +175,19 @@ stat :: proc(handle: Handle) -> (File_Type, i64, FS_Error) {
 	}
 	op := nbio.stat(handle, cb)
 	op.user_data[0] = transmute(rawptr)(os)
-	res, _ := async.recv(os)
-	return res.type, res.size, res.err
+
+	if cancel, cancel_ok := cancel.(async.Cancel_Token); cancel_ok {
+		res: Stat_Result
+		idx := async.select({async.branch(cancel), async.branch(os, &res)})
+		if idx == 0 {
+			nbio.remove(op)
+			async.destroy(os)
+			return {}, {}, .Timeout
+		} else do return res.type, res.size, res.err
+	} else {
+		res := async.recv(os)
+		return res.type, res.size, res.err
+	}
 }
 
 Read_Dir :: distinct os.Read_Directory_Iterator

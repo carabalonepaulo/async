@@ -87,7 +87,7 @@ one_shot_try_recv :: proc(self: One_Shot($T)) -> (value: T, ok: bool) {
 	return
 }
 
-one_shot_recv :: proc(self: One_Shot($T)) -> (value: T, ok: bool) {
+one_shot_recv :: proc(self: One_Shot($T)) -> (value: T, ok: bool) #optional_ok {
 	defer if ok do one_shot_destroy(self)
 
 	raw_inner := try_get_raw_inner(self) or_return
@@ -104,7 +104,7 @@ one_shot_recv :: proc(self: One_Shot($T)) -> (value: T, ok: bool) {
 	return
 }
 
-one_shot_branch :: proc(self: One_Shot($T), out: ^T, out_ok: ^bool) -> Case {
+one_shot_branch :: proc(self: One_Shot($T), out: ^T, out_ok: ^bool = nil) -> Case {
 	Case_State :: struct($T: typeid) {
 		os:     One_Shot(T),
 		out:    ^T,
@@ -126,12 +126,12 @@ one_shot_branch :: proc(self: One_Shot($T), out: ^T, out_ok: ^bool) -> Case {
 			state := load_inline(&self.ud, Case_State(T))
 			value := one_shot_try_recv(state.os) or_return
 			state.out^ = value
-			state.out_ok^ = true
+			if state.out_ok != nil do state.out_ok^ = true
 			return true
 		},
 		complete = proc(self: ^Case, ok: bool) {
 			state := load_inline(&self.ud, Case_State(T))
-			state.out_ok^ = ok
+			if state.out_ok != nil do state.out_ok^ = ok
 			if ok {
 				raw_inner := get_raw_inner(state.os)
 				state.out^ = get_value(raw_inner, T)

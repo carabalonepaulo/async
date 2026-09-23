@@ -13,6 +13,7 @@ destroy :: proc {
 	signal_destroy,
 	wait_group_destroy,
 	semaphore_destroy,
+	one_shot_destroy,
 }
 
 try_send :: proc {
