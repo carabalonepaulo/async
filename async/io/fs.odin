@@ -1,7 +1,6 @@
 package async_io
 
 import ".."
-import "core:fmt"
 import "core:nbio"
 import "core:os"
 
@@ -61,6 +60,8 @@ read :: proc(
 	return try(op, cancel, FS_Error, FS_Error.Timeout) or_return
 }
 
+Read_Entire_File_Error :: nbio.Read_Entire_File_Error
+
 @(private)
 Read_Entire_File_Result :: struct {
 	buf: []u8,
@@ -74,24 +75,44 @@ read_entire_file :: proc(
 	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> (
 	buf: []u8,
-	err: nbio.Read_Entire_File_Error,
+	err: Read_Entire_File_Error,
 ) {
 	file, open_err := open(path, {.Read}, cancel = cancel)
-	if open_err != .None do return {}, nbio.Read_Entire_File_Error{.Open, open_err}
+	if open_err != .None do return {}, Read_Entire_File_Error{.Open, open_err}
 	defer close(file)
 
 	type, size, stat_err := stat(file, cancel)
-	if stat_err != .None do return {}, nbio.Read_Entire_File_Error{.Stat, stat_err}
-	if type != .Regular do return {}, nbio.Read_Entire_File_Error{.Stat, .Unsupported}
+	if stat_err != .None do return {}, Read_Entire_File_Error{.Stat, stat_err}
+	if type != .Regular do return {}, Read_Entire_File_Error{.Stat, .Unsupported}
 
 	read_buf, alloc_err := make([]u8, size)
-	if alloc_err != nil do return {}, nbio.Read_Entire_File_Error{.Read, .Allocation_Failed}
+	if alloc_err != nil do return {}, Read_Entire_File_Error{.Read, .Allocation_Failed}
 	defer if err.operation != .None do delete(read_buf)
 
 	read_err := read(file, 0, read_buf, true, cancel)
-	if read_err != nil do return {}, nbio.Read_Entire_File_Error{.Read, read_err}
+	if read_err != nil do return {}, Read_Entire_File_Error{.Read, read_err}
 
 	return read_buf, {}
+}
+
+Write_Entire_File_Error :: nbio.Read_Entire_File_Error
+
+write_entire_file :: proc(
+	path: string,
+	buf: []u8,
+	dir: Handle = nbio.CWD,
+	cancel: Maybe(async.Cancel_Token) = nil,
+) -> (
+	err: Write_Entire_File_Error,
+) {
+	file, open_err := open(path, {.Create, .Write, .Trunc})
+	if open_err != .None do return Write_Entire_File_Error{.Open, open_err}
+	defer close(file)
+
+	_, write_err := write(file, 0, buf, true, cancel)
+	if write_err != .None do return Write_Entire_File_Error{.Write, write_err}
+
+	return {}
 }
 
 @(private)

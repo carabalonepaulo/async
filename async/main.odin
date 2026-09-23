@@ -14,7 +14,6 @@ import tw "time_wheel"
 
 INITIAL_CAPACITY :: #config(ASYNC_INITIAL_CAPACITY, 64)
 
-COROUTINE_INLINE_STORAGE :: 8
 RESOURCE_INLINE_STORAGE :: 16
 CASE_INLINE_STORAGE :: 5
 
@@ -117,7 +116,7 @@ scheduler_deinit :: proc() {
 			res.drop(res)
 			return false
 		}
-		fmt.println(res.id)
+		fmt.printfln("resource leak: %v", res.id)
 		return true
 	})
 	assert(storage.count(&scheduler.resources) == 0, "scheduler has active resources")
