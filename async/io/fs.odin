@@ -1,6 +1,7 @@
 package async_io
 
 import ".."
+import "core:fmt"
 import "core:nbio"
 import "core:os"
 
@@ -70,19 +71,27 @@ read_entire_file :: proc(
 	path: string,
 	allocator := context.allocator,
 	dir: Handle = nbio.CWD,
-	loc := #caller_location,
+	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> (
-	[]u8,
-	nbio.Read_Entire_File_Error,
+	buf: []u8,
+	err: nbio.Read_Entire_File_Error,
 ) {
-	os := async.create_one_shot(Read_Entire_File_Result)
-	cb := proc(ud: rawptr, data: []u8, err: nbio.Read_Entire_File_Error) {
-		os := transmute(async.One_Shot(Read_Entire_File_Result))(ud)
-		async.send(os, Read_Entire_File_Result{data, err})
-	}
-	nbio.read_entire_file(path, transmute(rawptr)(os), cb, allocator, dir, nil, loc)
-	res, ok := async.recv(os)
-	return res.buf, res.err
+	file, open_err := open(path, {.Read}, cancel = cancel)
+	if open_err != .None do return {}, nbio.Read_Entire_File_Error{.Open, open_err}
+	defer close(file)
+
+	type, size, stat_err := stat(file, cancel)
+	if stat_err != .None do return {}, nbio.Read_Entire_File_Error{.Stat, stat_err}
+	if type != .Regular do return {}, nbio.Read_Entire_File_Error{.Stat, .Unsupported}
+
+	read_buf, alloc_err := make([]u8, size)
+	if alloc_err != nil do return {}, nbio.Read_Entire_File_Error{.Read, .Allocation_Failed}
+	defer if err.operation != .None do delete(read_buf)
+
+	read_err := read(file, 0, read_buf, true, cancel)
+	if read_err != nil do return {}, nbio.Read_Entire_File_Error{.Read, read_err}
+
+	return read_buf, {}
 }
 
 @(private)
