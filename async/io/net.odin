@@ -1,10 +1,8 @@
 package async_io
 
 import ".."
-import "core:fmt"
 import "core:nbio"
 import "core:net"
-import "core:time"
 
 SEND_ENTIRE_FILE :: nbio.SEND_ENTIRE_FILE
 
@@ -63,21 +61,18 @@ Accept_Result :: struct {
 
 accept :: proc(
 	socket: net.TCP_Socket,
-	timeout: time.Duration = NO_TIMEOUT,
+	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> (
-	net.TCP_Socket,
-	net.Endpoint,
-	net.Accept_Error,
+	client: net.TCP_Socket,
+	ep: net.Endpoint,
+	err: net.Accept_Error,
 ) {
 	cb := proc(op: ^nbio.Operation) {
-		async.send(
-			load_handle(op),
-			Accept_Result{op.accept.client, op.accept.client_endpoint, op.accept.err},
-		)
+		os := get_one_shot(op, Accept_Result)
+		async.send(os, Accept_Result{op.accept.client, op.accept.client_endpoint, op.accept.err})
 	}
-	op := nbio.accept(socket, cb, timeout)
-	store_handle(op)
-	res := async.recv(Accept_Result)
+	op := nbio.accept(socket, cb, nbio.NO_TIMEOUT)
+	res := try(op, cancel, Accept_Result, net.Accept_Error.Timeout) or_return
 	return res.client, res.client_endpoint, res.err
 }
 
@@ -89,17 +84,17 @@ Dial_Result :: struct {
 
 dial :: proc(
 	endpoint: net.Endpoint,
-	timeout: time.Duration = NO_TIMEOUT,
+	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> (
-	net.TCP_Socket,
-	net.Network_Error,
+	sock: net.TCP_Socket,
+	err: net.Network_Error,
 ) {
 	cb := proc(op: ^nbio.Operation) {
-		async.send(load_handle(op), Dial_Result{op.dial.socket, op.dial.err})
+		os := get_one_shot(op, Dial_Result)
+		async.send(os, Dial_Result{op.dial.socket, op.dial.err})
 	}
-	op := nbio.dial(endpoint, cb, timeout)
-	store_handle(op)
-	res := async.recv(Dial_Result)
+	op := nbio.dial(endpoint, cb, nbio.NO_TIMEOUT)
+	res := try(op, cancel, Dial_Result, net.Dial_Error.Timeout) or_return
 	return res.sock, res.err
 }
 
@@ -113,17 +108,24 @@ recv :: proc(
 	socket: net.Any_Socket,
 	bufs: [][]u8,
 	all: bool = false,
-	timeout: time.Duration = NO_TIMEOUT,
+	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> (
-	int,
-	nbio.Recv_Error,
+	n: int,
+	err: nbio.Recv_Error,
 ) {
 	cb := proc(op: ^nbio.Operation) {
-		async.send(load_handle(op), Recv_Result{op.recv.received, op.recv.err})
+		os := get_one_shot(op, Recv_Result)
+		async.send(os, Recv_Result{op.recv.received, op.recv.err})
 	}
-	op := nbio.recv(socket, bufs, cb, all, timeout)
-	store_handle(op)
-	res := async.recv(Recv_Result)
+	op := nbio.recv(socket, bufs, cb, all, nbio.NO_TIMEOUT)
+
+	cancel_err := get_socket_cancel_error(
+		socket,
+		nbio.Recv_Error,
+		net.TCP_Recv_Error.Timeout,
+		net.UDP_Recv_Error.Timeout,
+	)
+	res := try(op, cancel, Recv_Result, cancel_err) or_return
 	return res.received, res.err
 }
 
@@ -138,64 +140,39 @@ send :: proc(
 	bufs: [][]u8,
 	endpoint: net.Endpoint = {},
 	all: bool = true,
-	timeout: time.Duration = NO_TIMEOUT,
+	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> (
-	int,
-	nbio.Send_Error,
+	sent: int,
+	err: nbio.Send_Error,
 ) {
 	cb := proc(op: ^nbio.Operation) {
-		async.send(load_handle(op), Send_Result{op.send.sent, op.send.err})
+		os := get_one_shot(op, Send_Result)
+		async.send(os, Send_Result{op.send.sent, op.send.err})
 	}
-	op := nbio.send(socket, bufs, cb, endpoint, all, timeout)
-	store_handle(op)
-	res := async.recv(Send_Result)
+	op := nbio.send(socket, bufs, cb, endpoint, all, nbio.NO_TIMEOUT)
+
+	cancel_err := get_socket_cancel_error(
+		socket,
+		nbio.Send_Error,
+		net.TCP_Send_Error.Timeout,
+		net.UDP_Send_Error.Timeout,
+	)
+	res := try(op, cancel, Send_Result, cancel_err) or_return
 	return res.sent, res.err
 }
 
-send_file :: proc {
-	send_file_without_progress,
-	send_file_with_progress,
-}
-
-send_file_without_progress :: proc(
+send_file :: proc(
 	socket: net.TCP_Socket,
 	file: Handle,
 	offset: int = 0,
 	nbytes: int = SEND_ENTIRE_FILE,
-	timeout: time.Duration = NO_TIMEOUT,
+	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> nbio.Send_File_Error {
-	cb := proc(op: ^nbio.Operation) {async.send(load_handle(op), op.sendfile.err)}
-	op := nbio.sendfile(socket, file, cb, offset, nbytes, false, timeout)
-	store_handle(op)
-	return async.recv(nbio.Send_File_Error)
-}
-
-Send_File_Status :: struct {
-	file:    Handle,
-	sent:    int,
-	err:     nbio.Send_File_Error,
-	is_done: bool,
-}
-
-send_file_with_progress :: proc(
-	socket: net.TCP_Socket,
-	file: Handle,
-	offset: int = 0,
-	nbytes: int = SEND_ENTIRE_FILE,
-	progress: async.Chan(Send_File_Status),
-	timeout: time.Duration = NO_TIMEOUT,
-) {
 	cb := proc(op: ^nbio.Operation) {
-		progress := async.chan_from_rawptr(Send_File_Status, op.user_data[0])
-		status := Send_File_Status {
-			file    = op.sendfile.file,
-			sent    = op.sendfile.sent,
-			err     = op.sendfile.err,
-			is_done = op.sendfile.sent == op.sendfile.nbytes || op.sendfile.err != nil,
-		}
-		async.send(progress, status)
+		os := get_one_shot(op, nbio.Send_File_Error)
+		async.send(os, op.sendfile.err)
 	}
-	op := nbio.sendfile(socket, file, cb, offset, nbytes, true, timeout)
-	op.user_data[0] = async.into_rawptr(progress)
+	op := nbio.sendfile(socket, file, cb, offset, nbytes, false, nbio.NO_TIMEOUT)
+	return try(op, cancel, nbio.Send_File_Error, nbio.FS_Error.Timeout) or_return
 }
 

@@ -33,29 +33,16 @@ open :: proc(
 	dir: nbio.Handle = nbio.CWD,
 	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> (
-	Handle,
-	FS_Error,
+	handle: Handle,
+	err: FS_Error,
 ) {
-	os := async.create_one_shot(Open_Result)
 	cb := proc(op: ^nbio.Operation) {
-		state := async.load_inline(&op.user_data, State(Open_Result))
-		if was_cancelled(state.cancel) {
-			async.destroy(state.os)
-			if op.open.err == nil do nbio.close(op.open.handle)
-		} else do async.send(state.os, Open_Result{op.open.handle, op.open.err})
+		os := get_one_shot(op, Open_Result)
+		async.send(os, Open_Result{op.open.handle, op.open.err})
 	}
 	op := nbio.open(path, cb, mode, perm, dir)
-	async.store_inline(&op.user_data, State(Open_Result){os, cancel})
-
-	if cancel, cancel_ok := cancel.(async.Cancel_Token); cancel_ok {
-		res: Open_Result
-		idx := async.select({async.branch(cancel), async.branch(os, &res)})
-		if idx == 0 do return 0, .Timeout
-		else do return res.handle, res.err
-	} else {
-		res := async.recv(os)
-		return res.handle, res.err
-	}
+	res := try(op, cancel, Open_Result, FS_Error.Timeout) or_return
+	return res.handle, res.err
 }
 
 read :: proc(
@@ -65,26 +52,12 @@ read :: proc(
 	all := false,
 	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> FS_Error {
-	os := async.create_one_shot(FS_Error)
 	cb := proc(op: ^nbio.Operation) {
-		os := transmute(async.One_Shot(FS_Error))(op.user_data[0])
+		os := get_one_shot(op, FS_Error)
 		async.send(os, op.read.err)
 	}
 	op := nbio.read(handle, offset, buf, cb, all, nbio.NO_TIMEOUT)
-	op.user_data[0] = transmute(rawptr)(os)
-
-	if cancel, cancel_ok := cancel.(async.Cancel_Token); cancel_ok {
-		res: FS_Error
-		idx := async.select({async.branch(cancel), async.branch(os, &res)})
-		if idx == 0 {
-			nbio.remove(op)
-			async.destroy(os)
-			return .Timeout
-		} else do return res
-	} else {
-		res := async.recv(os)
-		return res
-	}
+	return try(op, cancel, FS_Error, FS_Error.Timeout) or_return
 }
 
 @(private)
@@ -125,29 +98,16 @@ write :: proc(
 	all := true,
 	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> (
-	int,
-	FS_Error,
+	written: int,
+	err: FS_Error,
 ) {
-	os := async.create_one_shot(Write_Result)
 	cb := proc(op: ^nbio.Operation) {
-		os := transmute(async.One_Shot(Write_Result))(op.user_data[0])
+		os := get_one_shot(op, Write_Result)
 		async.send(os, Write_Result{op.write.written, op.write.err})
 	}
 	op := nbio.write(handle, offset, buf, cb, all, nbio.NO_TIMEOUT)
-	op.user_data[0] = transmute(rawptr)(os)
-
-	if cancel, cancel_ok := cancel.(async.Cancel_Token); cancel_ok {
-		res: Write_Result
-		idx := async.select({async.branch(cancel), async.branch(os, &res)})
-		if idx == 0 {
-			nbio.remove(op)
-			async.destroy(os)
-			return 0, .Timeout
-		} else do return res.written, res.err
-	} else {
-		res := async.recv(os)
-		return res.written, res.err
-	}
+	res := try(op, cancel, Write_Result, FS_Error.Timeout) or_return
+	return res.written, res.err
 }
 
 @(private)
@@ -161,30 +121,17 @@ stat :: proc(
 	handle: Handle,
 	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> (
-	File_Type,
-	i64,
-	FS_Error,
+	type: File_Type,
+	size: i64,
+	err: FS_Error,
 ) {
-	os := async.create_one_shot(Stat_Result)
 	cb := proc(op: ^nbio.Operation) {
-		os := transmute(async.One_Shot(Stat_Result))(op.user_data[0])
+		os := get_one_shot(op, Stat_Result)
 		async.send(os, Stat_Result{op.stat.type, op.stat.size, op.stat.err})
 	}
 	op := nbio.stat(handle, cb)
-	op.user_data[0] = transmute(rawptr)(os)
-
-	if cancel, cancel_ok := cancel.(async.Cancel_Token); cancel_ok {
-		res: Stat_Result
-		idx := async.select({async.branch(cancel), async.branch(os, &res)})
-		if idx == 0 {
-			nbio.remove(op)
-			async.destroy(os)
-			return {}, {}, .Timeout
-		} else do return res.type, res.size, res.err
-	} else {
-		res := async.recv(os)
-		return res.type, res.size, res.err
-	}
+	res := try(op, cancel, Stat_Result, FS_Error.Timeout) or_return
+	return res.type, res.size, res.err
 }
 
 Read_Dir :: distinct os.Read_Directory_Iterator

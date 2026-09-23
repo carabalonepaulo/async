@@ -2,27 +2,46 @@ package async_io
 
 import ".."
 import "core:nbio"
+import "core:net"
 
 @(private)
-store_handle :: #force_inline proc(op: ^nbio.Operation) {
-	op.user_data[0] = transmute(rawptr)(async.get_handle())
+get_one_shot :: #force_inline proc(op: ^nbio.Operation, $T: typeid) -> async.One_Shot(T) {
+	return transmute(async.One_Shot(T))(op.user_data[0])
 }
 
 @(private)
-load_handle :: #force_inline proc(op: ^nbio.Operation) -> async.Handle {
-	return transmute(async.Handle)(op.user_data[0])
-}
-
-@(private)
-State :: struct($T: typeid) {
-	os:     async.One_Shot(T),
+try :: proc(
+	op: ^nbio.Operation,
 	cancel: Maybe(async.Cancel_Token),
+	$T: typeid,
+	err: $E,
+) -> (
+	T,
+	E,
+) {
+	os := async.create_one_shot(T)
+	op.user_data[0] = transmute(rawptr)(os)
+
+	if cancel, cancel_ok := cancel.(async.Cancel_Token); cancel_ok {
+		res: T
+		idx := async.select({async.branch(cancel), async.branch(os, &res)})
+		if idx == 0 {
+			nbio.remove(op)
+			async.destroy(os)
+			return {}, err
+		} else do return res, {}
+	} else {
+		res := async.recv(os)
+		return res, {}
+	}
 }
 
 @(private)
-was_cancelled :: proc(cancel: Maybe(async.Cancel_Token)) -> bool {
-	cancel, ok := cancel.(async.Cancel_Token)
-	if ok do return async.is_triggered(cancel)
-	return false
+get_socket_cancel_error :: proc(sock: net.Any_Socket, $U: typeid, tcp_err: $A, udp_err: $B) -> U {
+	if _, ok := sock.(net.TCP_Socket); ok {
+		return tcp_err
+	} else {
+		return udp_err
+	}
 }
 

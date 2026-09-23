@@ -1,6 +1,5 @@
 package async_io
 
-import ".."
 import "core:nbio"
 
 NO_TIMEOUT :: nbio.NO_TIMEOUT
