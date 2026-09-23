@@ -22,6 +22,7 @@ DEFAULT_STACK_SIZE :: #config(ASYNC_DEFAULT_STACK_SIZE, 64 * mem.Kilobyte)
 DEFAULT_STORAGE_SIZE :: #config(ASYNC_DEFAULT_STORAGE_SIZE, 256)
 
 Internal_Resource :: enum {
+	Unknown,
 	Coroutine,
 	Timer,
 	Channel,
@@ -55,7 +56,6 @@ Internal_State :: struct {
 	id:        u64,
 	queued:    bool,
 	allocator: mem.Allocator,
-	ud:        [COROUTINE_INLINE_STORAGE]rawptr,
 	hooks:     [Hook]Closure,
 }
 
@@ -294,24 +294,6 @@ get_current_internal_state :: #force_inline proc() -> ^Internal_State {
 get_internal_state :: #force_inline proc(handle: Handle) -> (state: ^Internal_State, ok: bool) {
 	res := storage.get_ptr(&scheduler.resources, u64(handle)) or_return
 	return transmute(^Internal_State)(res.ud[0]), true
-}
-
-get_user_data_from_current :: proc(idx: int) -> rawptr {
-	return get_current_internal_state().ud[idx]
-}
-
-get_user_data_from_handle :: proc(handle: Handle, idx: int) -> rawptr {
-	state, ok := get_internal_state(handle)
-	return ok ? state.ud[idx] : nil
-}
-
-set_user_data_to_current :: proc(idx: int, ud: rawptr) {
-	get_current_internal_state().ud[idx] = ud
-}
-
-set_user_data_to_handle :: proc(handle: Handle, idx: int, ud: rawptr) {
-	state, ok := get_internal_state(handle)
-	if ok do state.ud[idx] = ud
 }
 
 get_scheduler :: #force_inline proc() -> ^Scheduler {
