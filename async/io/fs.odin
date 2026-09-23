@@ -1,10 +1,8 @@
 package async_io
 
 import ".."
-import "core:os"
-import "core:testing"
-
 import "core:nbio"
+import "core:os"
 import "core:time"
 
 CWD :: nbio.CWD
@@ -38,12 +36,14 @@ open :: proc(
 	Handle,
 	FS_Error,
 ) {
+	os := async.create_one_shot(Open_Result)
 	cb := proc(op: ^nbio.Operation) {
-		async.send(load_handle(op), Open_Result{op.open.handle, op.open.err})
+		os := transmute(async.One_Shot(Open_Result))(op.user_data[0])
+		async.send(os, Open_Result{op.open.handle, op.open.err})
 	}
 	op := nbio.open(path, cb, mode, perm, dir)
-	store_handle(op)
-	res := async.recv(Open_Result)
+	op.user_data[0] = transmute(rawptr)(os)
+	res, _ := async.recv(os)
 	return res.handle, res.err
 }
 
@@ -54,10 +54,15 @@ read :: proc(
 	all := false,
 	timeout: time.Duration = NO_TIMEOUT,
 ) -> FS_Error {
-	cb := proc(op: ^nbio.Operation) {async.send(load_handle(op), op.read.err)}
+	os := async.create_one_shot(FS_Error)
+	cb := proc(op: ^nbio.Operation) {
+		os := transmute(async.One_Shot(FS_Error))(op.user_data[0])
+		async.send(os, op.read.err)
+	}
 	op := nbio.read(handle, offset, buf, cb, all, timeout)
-	store_handle(op)
-	return async.recv(FS_Error)
+	op.user_data[0] = transmute(rawptr)(os)
+	res, _ := async.recv(os)
+	return res
 }
 
 @(private)
@@ -75,13 +80,13 @@ read_entire_file :: proc(
 	[]u8,
 	nbio.Read_Entire_File_Error,
 ) {
+	os := async.create_one_shot(Read_Entire_File_Result)
 	cb := proc(ud: rawptr, data: []u8, err: nbio.Read_Entire_File_Error) {
-		handle := transmute(async.Handle)(ud)
-		async.send(handle, Read_Entire_File_Result{data, err})
+		os := transmute(async.One_Shot(Read_Entire_File_Result))(ud)
+		async.send(os, Read_Entire_File_Result{data, err})
 	}
-	handle := transmute(rawptr)(async.get_handle())
-	nbio.read_entire_file(path, handle, cb, allocator, dir, nil, loc)
-	res := async.recv(Read_Entire_File_Result)
+	nbio.read_entire_file(path, transmute(rawptr)(os), cb, allocator, dir, nil, loc)
+	res, _ := async.recv(os)
 	return res.buf, res.err
 }
 
@@ -101,12 +106,14 @@ write :: proc(
 	int,
 	FS_Error,
 ) {
+	os := async.create_one_shot(Write_Result)
 	cb := proc(op: ^nbio.Operation) {
-		async.send(load_handle(op), Write_Result{op.write.written, op.write.err})
+		os := transmute(async.One_Shot(Write_Result))(op.user_data[0])
+		async.send(os, Write_Result{op.write.written, op.write.err})
 	}
 	op := nbio.write(handle, offset, buf, cb, all, timeout)
-	store_handle(op)
-	res := async.recv(Write_Result)
+	op.user_data[0] = transmute(rawptr)(os)
+	res, _ := async.recv(os)
 	return res.written, res.err
 }
 
@@ -118,12 +125,14 @@ Stat_Result :: struct {
 }
 
 stat :: proc(handle: Handle) -> (File_Type, i64, FS_Error) {
+	os := async.create_one_shot(Stat_Result)
 	cb := proc(op: ^nbio.Operation) {
-		async.send(load_handle(op), Stat_Result{op.stat.type, op.stat.size, op.stat.err})
+		os := transmute(async.One_Shot(Stat_Result))(op.user_data[0])
+		async.send(os, Stat_Result{op.stat.type, op.stat.size, op.stat.err})
 	}
 	op := nbio.stat(handle, cb)
-	store_handle(op)
-	res := async.recv(Stat_Result)
+	op.user_data[0] = transmute(rawptr)(os)
+	res, _ := async.recv(os)
 	return res.type, res.size, res.err
 }
 

@@ -67,6 +67,7 @@ wake :: proc(self: Handle) {
 	queue.enqueue(&scheduler.ready, u64(self))
 }
 
+@(deprecated = "'async.send(coro_handle, value)' is deprecated, use 'async.One_Shot(T)' instead")
 scheduler_send :: proc(self: Handle, value: $T) {
 	ud, ok := get_internal_state(self)
 	assert(ok, "invalid task id")
@@ -280,6 +281,7 @@ yield :: #force_inline proc() {
 	coro.check(coro.yield(coro.running()))
 }
 
+@(deprecated = "'async.recv(coro_handle, T)' is deprecated, use 'async.One_Shot(T)' instead")
 scheduler_recv :: #force_inline proc($T: typeid) -> T {
 	yield()
 	return pop(T)
