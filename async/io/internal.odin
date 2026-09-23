@@ -14,8 +14,15 @@ load_handle :: #force_inline proc(op: ^nbio.Operation) -> async.Handle {
 }
 
 @(private)
-was_cancelled :: proc(ud: rawptr) -> bool {
-	if ud != nil do return async.is_triggered(transmute(async.Cancel_Token)(ud))
+State :: struct($T: typeid) {
+	os:     async.One_Shot(T),
+	cancel: Maybe(async.Cancel_Token),
+}
+
+@(private)
+was_cancelled :: proc(cancel: Maybe(async.Cancel_Token)) -> bool {
+	cancel, ok := cancel.(async.Cancel_Token)
+	if ok do return async.is_triggered(cancel)
 	return false
 }
 

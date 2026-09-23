@@ -3,7 +3,6 @@ package async_io
 import ".."
 import "core:nbio"
 import "core:os"
-import "core:time"
 
 CWD :: nbio.CWD
 
@@ -39,18 +38,16 @@ open :: proc(
 ) {
 	os := async.create_one_shot(Open_Result)
 	cb := proc(op: ^nbio.Operation) {
-		os := transmute(async.One_Shot(Open_Result))(op.user_data[0])
-		if was_cancelled(op.user_data[1]) {
-			async.destroy(os)
+		state := async.load_inline(&op.user_data, State(Open_Result))
+		if was_cancelled(state.cancel) {
+			async.destroy(state.os)
 			if op.open.err == nil do nbio.close(op.open.handle)
-		} else do async.send(os, Open_Result{op.open.handle, op.open.err})
+		} else do async.send(state.os, Open_Result{op.open.handle, op.open.err})
 	}
 	op := nbio.open(path, cb, mode, perm, dir)
-	op.user_data[0] = transmute(rawptr)(os)
+	async.store_inline(&op.user_data, State(Open_Result){os, cancel})
 
 	if cancel, cancel_ok := cancel.(async.Cancel_Token); cancel_ok {
-		op.user_data[1] = transmute(rawptr)(cancel)
-
 		res: Open_Result
 		idx := async.select({async.branch(cancel), async.branch(os, &res)})
 		if idx == 0 do return 0, .Timeout
