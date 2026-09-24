@@ -1,6 +1,8 @@
 package async
 
+import "core:testing"
 import "core:time"
+import "coro"
 import "storage"
 
 @(private = "file")
@@ -116,5 +118,81 @@ get_inner :: proc(self: Cancel_Token) -> ^Inner_Cancel_Token {
 
 cancel_token_into_rawptr :: #force_inline proc(self: Cancel_Token) -> rawptr {
 	return transmute(rawptr)(self)
+}
+
+@(test)
+test_wait :: proc(t: ^testing.T) {
+	init()
+	defer deinit()
+
+	cancel := create_cancel_token()
+	count := 0
+
+	a := spawn(&count, cancel, proc(count: ^int, cancel: Cancel_Token) {
+		wait(cancel)
+		count^ += 1
+	})
+
+	b := spawn(&count, cancel, proc(count: ^int, cancel: Cancel_Token) {
+		wait(cancel)
+		count^ += 1
+	})
+
+	c := spawn(&count, cancel, t, proc(count: ^int, cancel: Cancel_Token, t: ^testing.T) {
+		trigger(cancel)
+		reschedule()
+		testing.expect(t, count^ == 2)
+	})
+
+	block(c)
+}
+
+@(test)
+test_select :: proc(t: ^testing.T) {
+	init()
+	defer deinit()
+
+	State :: struct {
+		a:      Handle,
+		b:      Handle,
+		c:      Handle,
+		//
+		wg:     Wait_Group,
+		cancel: Cancel_Token,
+		t:      ^testing.T,
+	}
+
+	state: State
+	state.cancel = create_cancel_token()
+	state.wg = create_wait_group()
+	add(state.wg, 2)
+	defer destroy(state.wg)
+
+	state.a = spawn(&state, proc(state: ^State) {
+		idx := select({branch(state.cancel)})
+		testing.expect(state.t, idx == 0)
+
+		inner := get_current_internal_state()
+		testing.expect(state.t, coro.get_bytes_stored(inner.co) == 0)
+
+		done(state.wg)
+	})
+
+	state.b = spawn(&state, proc(state: ^State) {
+		idx := select({branch(state.cancel)})
+		testing.expect(state.t, idx == 0)
+
+		inner := get_current_internal_state()
+		testing.expect(state.t, coro.get_bytes_stored(inner.co) == 0)
+
+		done(state.wg)
+	})
+
+	state.c = spawn(&state, proc(state: ^State) {
+		trigger(state.cancel)
+		wait(state.wg)
+	})
+
+	block(state.c)
 }
 
