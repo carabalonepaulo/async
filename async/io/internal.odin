@@ -1,6 +1,7 @@
 package async_io
 
 import ".."
+import "core:fmt"
 import "core:nbio"
 import "core:net"
 
@@ -15,6 +16,7 @@ try :: proc(
 	cancel: Maybe(async.Cancel_Token),
 	$T: typeid,
 	err: $E,
+	loc := #caller_location,
 ) -> (
 	T,
 	E,

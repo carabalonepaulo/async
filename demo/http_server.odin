@@ -1,6 +1,7 @@
 package main
 
 import "core:fmt"
+import "core:os"
 import "core:time"
 
 import "../async"
@@ -88,11 +89,12 @@ http_server_demo :: proc() {
 
 	router.get(&r, "/shutdown", proc(ctx: ^router.Context) -> bool {
 		running = false
-		return http.send_text(ctx.res, .Ok, "")
+		return false
 	})
 
 	router.get(&r, "/", proc(ctx: ^router.Context) -> bool {
-		return http.send_text(ctx.res, .Ok, "hello, world!")
+		id := os.get_current_thread_id()
+		return http.send_text(ctx.res, .Ok, fmt.tprintf("hello, world! / id: %v", id))
 	})
 
 	server: http.Server
@@ -100,7 +102,7 @@ http_server_demo :: proc() {
 	defer http.deinit(&server)
 
 	for async.get_pending() > 0 {
-		if !running do http.deinit(&server)
+		if !running do http.close(&server)
 		async.poll()
 		io.poll()
 	}

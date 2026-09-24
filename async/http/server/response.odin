@@ -7,6 +7,7 @@ import "core:nbio"
 import "core:strconv"
 import "core:strings"
 
+import "../.."
 import cb "../../circular_buffer"
 import "../../io"
 import "headers"
@@ -14,6 +15,7 @@ import "headers"
 @(private)
 Response_Internal :: struct {
 	sock:       nbio.TCP_Socket,
+	cancel:     async.Cancel_Token,
 	send_buf:   cb.Circular_Buffer,
 	line_buf:   []u8,
 	mime_types: ^map[string]string,
@@ -297,7 +299,7 @@ flush :: proc(internal: ^Response_Internal) -> (ok: bool) {
 	for {
 		buf := cb.peek_read(&internal.send_buf)
 		if len(buf) == 0 do break
-		n, err := io.send(internal.sock, {buf})
+		n, err := io.send(internal.sock, {buf}, cancel = internal.cancel)
 		if err != nil || n <= 0 do return false
 		cb.commit_read(&internal.send_buf, n)
 	}

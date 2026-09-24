@@ -1,2 +1,2 @@
 run:
-    @odin run demo
+    @-odin run demo

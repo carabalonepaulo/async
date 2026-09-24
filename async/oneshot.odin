@@ -235,6 +235,7 @@ internal_wake :: #force_inline proc(self: rawptr, $T: typeid, ok: bool) {
 	if handle, handle_ok := (handle^).(Handle); handle_ok {
 		if case_idx^ == -1 do wake(handle)
 		else do wake_case(handle, case_idx^, ok)
+		set_both(self, T, nil, 0, false)
 	}
 }
 

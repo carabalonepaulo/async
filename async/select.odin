@@ -99,7 +99,7 @@ all :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 }
 
 @(private)
-wake_case :: proc(handle: Handle, case_idx: int, ok: bool) -> bool {
+wake_case :: proc(handle: Handle, case_idx: int, ok: bool, loc := #caller_location) -> bool {
 	sched := get_scheduler()
 	state := get_internal_state(handle) or_return
 	if coro.get_bytes_stored(state.co) > 0 do return false
