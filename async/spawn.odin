@@ -11,32 +11,26 @@ spawn_without_data :: proc(
 	storage_size: uint = DEFAULT_STORAGE_SIZE,
 	stack_allocator := context.allocator,
 ) -> Handle {
-	ud := create_ud(rawptr(fn), stack_allocator)
+	ud := create_ud(rawptr(fn))
 	raw_fn := proc "c" (co: ^coro.Coro) {
 		ud := (^Internal_State)(coro.get_user_data(co))
 		context = ud.ctx
 		((proc())(ud.fn))()
 		call_hook(ud, .Exit)
 	}
-	desc := create_desc(raw_fn, ud, stack_size, storage_size)
+	desc := create_desc(raw_fn, ud)
 	coro.check(coro.create(&ud.co, &desc))
 	queue.enqueue(&scheduler.ready, ud.id)
 
 	return Handle(ud.id)
 }
 
-spawn_with_poly :: proc(
-	a: $A,
-	fn: proc(a: A),
-	stack_size: uint = DEFAULT_STACK_SIZE,
-	storage_size: uint = DEFAULT_STORAGE_SIZE,
-	stack_allocator := context.allocator,
-) -> Handle {
-	assert(size_of(A) <= storage_size, "storage is too small for spawn arguments")
+spawn_with_poly :: proc(a: $A, fn: proc(a: A)) -> Handle {
+	assert(size_of(A) <= DEFAULT_STORAGE_SIZE, "storage is too small for spawn arguments")
 
 	a := a
 
-	ud := create_ud(rawptr(fn), stack_allocator)
+	ud := create_ud(rawptr(fn))
 	raw_fn := proc "c" (co: ^coro.Coro) {
 		ud := (^Internal_State)(coro.get_user_data(co))
 		context = ud.ctx
@@ -48,7 +42,7 @@ spawn_with_poly :: proc(
 		call_hook(ud, .Exit)
 	}
 
-	desc := create_desc(raw_fn, ud, stack_size, storage_size)
+	desc := create_desc(raw_fn, ud)
 	coro.check(coro.create(&ud.co, &desc))
 	coro.push(ud.co, &a, size_of(a))
 
@@ -56,20 +50,16 @@ spawn_with_poly :: proc(
 	return Handle(ud.id)
 }
 
-spawn_with_poly2 :: proc(
-	a: $A,
-	b: $B,
-	fn: proc(a: A, b: B),
-	stack_size: uint = DEFAULT_STACK_SIZE,
-	storage_size: uint = DEFAULT_STORAGE_SIZE,
-	stack_allocator := context.allocator,
-) -> Handle {
-	assert(size_of(A) + size_of(B) <= storage_size, "storage is too small for spawn arguments")
+spawn_with_poly2 :: proc(a: $A, b: $B, fn: proc(a: A, b: B)) -> Handle {
+	assert(
+		size_of(A) + size_of(B) <= DEFAULT_STORAGE_SIZE,
+		"storage is too small for spawn arguments",
+	)
 
 	a := a
 	b := b
 
-	ud := create_ud(rawptr(fn), stack_allocator)
+	ud := create_ud(rawptr(fn))
 	raw_fn := proc "c" (co: ^coro.Coro) {
 		ud := (^Internal_State)(coro.get_user_data(co))
 		context = ud.ctx
@@ -83,7 +73,7 @@ spawn_with_poly2 :: proc(
 		call_hook(ud, .Exit)
 	}
 
-	desc := create_desc(raw_fn, ud, stack_size, storage_size)
+	desc := create_desc(raw_fn, ud)
 	coro.check(coro.create(&ud.co, &desc))
 	coro.push(ud.co, &a, size_of(a))
 	coro.push(ud.co, &b, size_of(b))
@@ -92,17 +82,9 @@ spawn_with_poly2 :: proc(
 	return Handle(ud.id)
 }
 
-spawn_with_poly3 :: proc(
-	a: $A,
-	b: $B,
-	c: $C,
-	fn: proc(a: A, b: B, c: C),
-	stack_size: uint = DEFAULT_STACK_SIZE,
-	storage_size: uint = DEFAULT_STORAGE_SIZE,
-	stack_allocator := context.allocator,
-) -> Handle {
+spawn_with_poly3 :: proc(a: $A, b: $B, c: $C, fn: proc(a: A, b: B, c: C)) -> Handle {
 	assert(
-		size_of(A) + size_of(B) + size_of(C) <= storage_size,
+		size_of(A) + size_of(B) + size_of(C) <= DEFAULT_STORAGE_SIZE,
 		"storage is too small for spawn arguments",
 	)
 
@@ -110,7 +92,7 @@ spawn_with_poly3 :: proc(
 	b := b
 	c := c
 
-	ud := create_ud(rawptr(fn), stack_allocator)
+	ud := create_ud(rawptr(fn))
 	raw_fn := proc "c" (co: ^coro.Coro) {
 		ud := (^Internal_State)(coro.get_user_data(co))
 		context = ud.ctx
@@ -127,7 +109,7 @@ spawn_with_poly3 :: proc(
 		call_hook(ud, .Exit)
 	}
 
-	desc := create_desc(raw_fn, ud, stack_size, storage_size)
+	desc := create_desc(raw_fn, ud)
 	coro.check(coro.create(&ud.co, &desc))
 	coro.push(ud.co, &a, size_of(a))
 	coro.push(ud.co, &b, size_of(b))
@@ -137,18 +119,9 @@ spawn_with_poly3 :: proc(
 	return Handle(ud.id)
 }
 
-spawn_with_poly4 :: proc(
-	a: $A,
-	b: $B,
-	c: $C,
-	d: $D,
-	fn: proc(a: A, b: B, c: C, d: D),
-	stack_size: uint = DEFAULT_STACK_SIZE,
-	storage_size: uint = DEFAULT_STORAGE_SIZE,
-	stack_allocator := context.allocator,
-) -> Handle {
+spawn_with_poly4 :: proc(a: $A, b: $B, c: $C, d: $D, fn: proc(a: A, b: B, c: C, d: D)) -> Handle {
 	assert(
-		size_of(A) + size_of(B) + size_of(C) + size_of(D) <= storage_size,
+		size_of(A) + size_of(B) + size_of(C) + size_of(D) <= DEFAULT_STORAGE_SIZE,
 		"storage is too small for spawn arguments",
 	)
 
@@ -157,7 +130,7 @@ spawn_with_poly4 :: proc(
 	c := c
 	d := d
 
-	ud := create_ud(rawptr(fn), stack_allocator)
+	ud := create_ud(rawptr(fn))
 	raw_fn := proc "c" (co: ^coro.Coro) {
 		ud := (^Internal_State)(coro.get_user_data(co))
 		context = ud.ctx
@@ -176,7 +149,7 @@ spawn_with_poly4 :: proc(
 		call_hook(ud, .Exit)
 	}
 
-	desc := create_desc(raw_fn, ud, stack_size, storage_size)
+	desc := create_desc(raw_fn, ud)
 	coro.check(coro.create(&ud.co, &desc))
 	coro.push(ud.co, &a, size_of(a))
 	coro.push(ud.co, &b, size_of(b))
@@ -194,12 +167,9 @@ spawn_with_poly5 :: proc(
 	d: $D,
 	e: $E,
 	fn: proc(a: A, b: B, c: C, d: D, e: E),
-	stack_size: uint = DEFAULT_STACK_SIZE,
-	storage_size: uint = DEFAULT_STORAGE_SIZE,
-	stack_allocator := context.allocator,
 ) -> Handle {
 	assert(
-		size_of(A) + size_of(B) + size_of(C) + size_of(D) + size_of(E) <= storage_size,
+		size_of(A) + size_of(B) + size_of(C) + size_of(D) + size_of(E) <= DEFAULT_STORAGE_SIZE,
 		"storage is too small for spawn arguments",
 	)
 
@@ -209,7 +179,7 @@ spawn_with_poly5 :: proc(
 	d := d
 	e := e
 
-	ud := create_ud(rawptr(fn), stack_allocator)
+	ud := create_ud(rawptr(fn))
 	raw_fn := proc "c" (co: ^coro.Coro) {
 		ud := (^Internal_State)(coro.get_user_data(co))
 		context = ud.ctx
@@ -230,7 +200,7 @@ spawn_with_poly5 :: proc(
 		call_hook(ud, .Exit)
 	}
 
-	desc := create_desc(raw_fn, ud, stack_size, storage_size)
+	desc := create_desc(raw_fn, ud)
 	coro.check(coro.create(&ud.co, &desc))
 	coro.push(ud.co, &a, size_of(a))
 	coro.push(ud.co, &b, size_of(b))

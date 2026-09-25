@@ -70,7 +70,7 @@ init :: proc(
 		)
 	}
 
-	async.spawn(self, begin_accept, 64)
+	async.spawn(self, begin_accept)
 	return nil
 }
 

@@ -49,13 +49,12 @@ Closure :: struct {
 
 @(private)
 Internal_State :: struct {
-	ctx:       runtime.Context,
-	co:        ^coro.Coro,
-	fn:        rawptr,
-	id:        u64,
-	queued:    bool,
-	allocator: mem.Allocator,
-	hooks:     [Hook]Closure,
+	ctx:    runtime.Context,
+	co:     ^coro.Coro,
+	fn:     rawptr,
+	id:     u64,
+	queued: bool,
+	hooks:  [Hook]Closure,
 }
 
 Handle :: distinct u64
@@ -326,7 +325,7 @@ pop :: proc($T: typeid) -> T {
 }
 
 @(private)
-create_ud :: proc(fn: rawptr, allocator: mem.Allocator) -> ^Internal_State {
+create_ud :: proc(fn: rawptr) -> ^Internal_State {
 	entry := storage.entry(&scheduler.resources)
 
 	ud := new(Internal_State)
@@ -334,7 +333,6 @@ create_ud :: proc(fn: rawptr, allocator: mem.Allocator) -> ^Internal_State {
 	ud.co = new(coro.Coro)
 	ud.fn = fn
 	ud.id = storage.get_id(&entry)
-	ud.allocator = allocator
 
 	res := Resource{}
 	res.id = auto_cast Internal_Resource.Coroutine
@@ -346,29 +344,22 @@ create_ud :: proc(fn: rawptr, allocator: mem.Allocator) -> ^Internal_State {
 }
 
 @(private)
-create_desc :: proc(
-	raw_fn: proc "c" (co: ^coro.Coro),
-	ud: ^Internal_State,
-	stack_size: uint,
-	storage_size: uint,
-) -> (
-	desc: coro.Desc,
-) {
-	desc = coro.desc_init(raw_fn, stack_size)
+create_desc :: proc(raw_fn: proc "c" (co: ^coro.Coro), ud: ^Internal_State) -> (desc: coro.Desc) {
+	desc = coro.desc_init(raw_fn, 0)
 	desc.user_data = ud
-	desc.storage_size = storage_size
-	desc.allocator_data = ud
-	desc.alloc_cb = proc "c" (size: c.size_t, allocator_data: rawptr) -> rawptr {
-		ud := (^Internal_State)(allocator_data)
-		context = ud.ctx
-		ptr, _ := mem.alloc(int(size), allocator = ud.allocator)
-		return ptr
-	}
-	desc.dealloc_cb = proc "c" (ptr: rawptr, size: c.size_t, allocator_data: rawptr) {
-		ud := (^Internal_State)(allocator_data)
-		context = ud.ctx
-		mem.free_with_size(ptr, int(size), allocator = ud.allocator)
-	}
+	desc.storage_size = DEFAULT_STORAGE_SIZE
+	// desc.allocator_data = ud
+	// desc.alloc_cb = proc "c" (size: c.size_t, allocator_data: rawptr) -> rawptr {
+	// 	ud := (^Internal_State)(allocator_data)
+	// 	context = ud.ctx
+	// 	ptr, _ := mem.alloc(int(size), allocator = ud.allocator)
+	// 	return ptr
+	// }
+	// desc.dealloc_cb = proc "c" (ptr: rawptr, size: c.size_t, allocator_data: rawptr) {
+	// 	ud := (^Internal_State)(allocator_data)
+	// 	context = ud.ctx
+	// 	mem.free_with_size(ptr, int(size), allocator = ud.allocator)
+	// }
 	return
 }
 
