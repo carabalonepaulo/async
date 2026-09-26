@@ -18,7 +18,6 @@ RESOURCE_INLINE_STORAGE :: 16
 CASE_INLINE_STORAGE :: 5
 
 DEFAULT_STACK_SIZE :: #config(ASYNC_DEFAULT_STACK_SIZE, 64 * mem.Kilobyte)
-DEFAULT_STORAGE_SIZE :: #config(ASYNC_DEFAULT_STORAGE_SIZE, 256)
 
 Internal_Resource :: enum {
 	Unknown,
@@ -56,6 +55,7 @@ Internal_State :: struct {
 	queued: bool,
 	hooks:  [Hook]Closure,
 	winner: Maybe(int),
+	args:   u64,
 }
 
 Handle :: distinct u64
@@ -291,22 +291,7 @@ get_pending :: #force_inline proc() -> uint {
 }
 
 @(private)
-push :: proc(co: ^coro.Coro, value: $T) {
-	value := value
-	coro.check(coro.push(co, &value, size_of(T)))
-}
-
-@(private)
-pop :: proc($T: typeid) -> T {
-	ud := get_current_internal_state()
-	if coro.get_bytes_stored(ud.co) < size_of(T) do panic("send/recv mismatch")
-	value: T
-	coro.check(coro.pop(ud.co, &value, size_of(T)))
-	return value
-}
-
-@(private)
-create_ud :: proc(fn: rawptr) -> ^Internal_State {
+create_ud :: proc(fn: rawptr, args: u64 = 0) -> ^Internal_State {
 	entry := storage.entry(&scheduler.resources)
 
 	ud := new(Internal_State)
@@ -314,6 +299,7 @@ create_ud :: proc(fn: rawptr) -> ^Internal_State {
 	ud.co = new(coro.Coro)
 	ud.fn = fn
 	ud.id = storage.get_id(&entry)
+	ud.args = args
 
 	res := Resource{}
 	res.id = auto_cast Internal_Resource.Coroutine
@@ -328,7 +314,7 @@ create_ud :: proc(fn: rawptr) -> ^Internal_State {
 create_desc :: proc(raw_fn: proc "c" (co: ^coro.Coro), ud: ^Internal_State) -> (desc: coro.Desc) {
 	desc = coro.desc_init(raw_fn, 0)
 	desc.user_data = ud
-	desc.storage_size = DEFAULT_STORAGE_SIZE
+	desc.storage_size = 0
 	// desc.allocator_data = ud
 	// desc.alloc_cb = proc "c" (size: c.size_t, allocator_data: rawptr) -> rawptr {
 	// 	ud := (^Internal_State)(allocator_data)
