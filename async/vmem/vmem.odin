@@ -8,11 +8,11 @@ Virtual_Block :: struct {
 	size: int,
 }
 
-reserve :: proc "contextless" (size: int) -> ([]u8, bool) {
+reserve :: proc(size: int) -> ([]u8, bool) {
 	return _reserve(size)
 }
 
-release :: proc "contextless" (block: []u8) {
+release :: proc(block: []u8) {
 	_release(block)
 }
 

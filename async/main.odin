@@ -11,13 +11,14 @@ import "core:time"
 import "coro"
 import "storage"
 import tw "time_wheel"
+import "vmem"
 
 INITIAL_CAPACITY :: #config(ASYNC_INITIAL_CAPACITY, 64)
 
 RESOURCE_INLINE_STORAGE :: 16
 CASE_INLINE_STORAGE :: 5
 
-DEFAULT_STACK_SIZE :: #config(ASYNC_DEFAULT_STACK_SIZE, 64 * mem.Kilobyte)
+DEFAULT_STACK_SIZE :: #config(ASYNC_DEFAULT_STACK_SIZE, 2 * mem.Megabyte)
 
 Internal_Resource :: enum {
 	Unknown,
@@ -312,21 +313,20 @@ create_ud :: proc(fn: rawptr, args: u64 = 0) -> ^Internal_State {
 
 @(private)
 create_desc :: proc(raw_fn: proc "c" (co: ^coro.Coro), ud: ^Internal_State) -> (desc: coro.Desc) {
-	desc = coro.desc_init(raw_fn, 0)
+	desc = coro.desc_init(raw_fn, DEFAULT_STACK_SIZE)
 	desc.user_data = ud
 	desc.storage_size = 0
-	// desc.allocator_data = ud
-	// desc.alloc_cb = proc "c" (size: c.size_t, allocator_data: rawptr) -> rawptr {
-	// 	ud := (^Internal_State)(allocator_data)
-	// 	context = ud.ctx
-	// 	ptr, _ := mem.alloc(int(size), allocator = ud.allocator)
-	// 	return ptr
-	// }
-	// desc.dealloc_cb = proc "c" (ptr: rawptr, size: c.size_t, allocator_data: rawptr) {
-	// 	ud := (^Internal_State)(allocator_data)
-	// 	context = ud.ctx
-	// 	mem.free_with_size(ptr, int(size), allocator = ud.allocator)
-	// }
+	desc.allocator_data = ud
+	desc.alloc_cb = proc "c" (size: c.size_t, allocator_data: rawptr) -> rawptr {
+		context = runtime.default_context()
+		ud := (^Internal_State)(allocator_data)
+		buf, _ := vmem.reserve(int(size))
+		return raw_data(buf)
+	}
+	desc.dealloc_cb = proc "c" (ptr: rawptr, size: c.size_t, allocator_data: rawptr) {
+		context = runtime.default_context()
+		vmem.release((cast([^]u8)(ptr))[:size])
+	}
 	return
 }
 

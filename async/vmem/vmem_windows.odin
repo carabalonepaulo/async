@@ -6,6 +6,9 @@ import "core:container/rbtree"
 import "core:sys/windows"
 
 @(private = "file")
+INITIAL_COMMIT :: 8
+
+@(private = "file")
 Block_Tree :: rbtree.Tree(uintptr, uintptr)
 
 @(private = "file", thread_local)
@@ -27,20 +30,22 @@ _init :: proc "contextless" () {
 	windows.AddVectoredExceptionHandler(1, veh)
 }
 
-@(private = "file")
 veh :: proc "system" (info: ^windows.EXCEPTION_POINTERS) -> i32 {
 	context = runtime.default_context()
+
 	record := info.ExceptionRecord
+	fault := uintptr(record.ExceptionInformation[1])
 
 	if record.ExceptionCode != windows.EXCEPTION_ACCESS_VIOLATION {
 		return windows.EXCEPTION_CONTINUE_SEARCH
 	}
 
-	if !blocks_initialized do return windows.EXCEPTION_CONTINUE_SEARCH
-
-	fault := uintptr(record.ExceptionInformation[1])
+	if !blocks_initialized {
+		return windows.EXCEPTION_CONTINUE_SEARCH
+	}
 
 	node := find_le(&blocks, fault)
+
 	if node == nil || fault >= node.value {
 		return windows.EXCEPTION_CONTINUE_SEARCH
 	}
@@ -52,20 +57,41 @@ veh :: proc "system" (info: ^windows.EXCEPTION_POINTERS) -> i32 {
 		windows.MEM_COMMIT,
 		windows.PAGE_READWRITE,
 	)
-	if committed == nil do return windows.EXCEPTION_CONTINUE_SEARCH
+
+	if committed == nil {
+		return windows.EXCEPTION_CONTINUE_SEARCH
+	}
 
 	return windows.EXCEPTION_CONTINUE_EXECUTION
 }
 
-_reserve :: proc "contextless" (size: int) -> ([]u8, bool) {
-	context = runtime.default_context()
+_reserve :: proc(size: int) -> ([]u8, bool) {
 	ensure_state()
 
 	data := windows.VirtualAlloc(nil, uint(size), windows.MEM_RESERVE, windows.PAGE_READWRITE)
+
 	if data == nil do return {}, false
 
 	base := uintptr(data)
 	end := base + uintptr(size)
+	end_page := (end - 1) & ~(uintptr(page_size) - 1)
+
+	for i in 0 ..< INITIAL_COMMIT {
+		page := end_page - uintptr(i) * uintptr(page_size)
+		if page < base do break
+
+		committed := windows.VirtualAlloc(
+			rawptr(page),
+			page_size,
+			windows.MEM_COMMIT,
+			windows.PAGE_READWRITE,
+		)
+
+		if committed == nil {
+			_ = windows.VirtualFree(data, 0, windows.MEM_RELEASE)
+			return {}, false
+		}
+	}
 
 	_, inserted, err := rbtree.find_or_insert(&blocks, base, end)
 	if err != nil || !inserted {
@@ -76,8 +102,7 @@ _reserve :: proc "contextless" (size: int) -> ([]u8, bool) {
 	return (([^]u8)(data))[:size], true
 }
 
-_release :: proc "contextless" (block: []u8) {
-	context = runtime.default_context()
+_release :: proc(block: []u8) {
 	base := uintptr(raw_data(block))
 	rbtree.remove_key(&blocks, base)
 	_ = windows.VirtualFree(raw_data(block), 0, windows.MEM_RELEASE)
