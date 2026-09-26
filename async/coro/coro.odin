@@ -1,6 +1,7 @@
 package async_coro
 
 import "core:c"
+import "core:fmt"
 import "core:strings"
 
 foreign import minicoro "minicoro.lib"
@@ -63,8 +64,11 @@ foreign minicoro {
 	result_description :: proc(res: Result) -> cstring ---
 }
 
-check :: #force_inline proc(res: Result) -> Result {
-	if res != .Success do panic(strings.clone_from_cstring(result_description(res)))
+check :: #force_inline proc(res: Result, loc := #caller_location) -> Result {
+	if res != .Success {
+		msg := strings.clone_from_cstring(result_description(res))
+		panic(fmt.tprintf("%v at %v", msg, loc))
+	}
 	return res
 }
 
