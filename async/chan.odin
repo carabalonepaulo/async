@@ -1,27 +1,21 @@
 package async
 
-import "base:runtime"
 import "core:container/queue"
+import "core:fmt"
+import "core:testing"
 
-import "storage"
+CHAN_INITIAL_CAPACITY :: 16
 
 @(private = "file")
 Waiter :: struct {
 	handle:   Handle,
-	dest_ptr: rawptr,
 	case_idx: int,
 }
 
 @(private = "file")
-Result :: struct($T: typeid) {
-	value: T,
-	ok:    bool,
-}
-
-@(private = "file")
 Inner_Chan :: struct($T: typeid) {
-	receivers: queue.Queue(Waiter),
-	items:     queue.Queue(Result(T)),
+	waiters: queue.Queue(Waiter),
+	items:   queue.Queue(T),
 }
 
 Chan :: struct($T: typeid) {
@@ -29,203 +23,143 @@ Chan :: struct($T: typeid) {
 	_marker: [0]T,
 }
 
-create_chan :: proc($T: typeid, cap := 16) -> Chan(T) {
-	sched := get_scheduler()
-	res := Resource{}
-	res.id = auto_cast Internal_Resource.Channel
+create_chan :: proc($T: typeid, cap: int = CHAN_INITIAL_CAPACITY) -> Chan(T) {
+	res := Resource {
+		id = auto_cast Internal_Resource.Channel,
+	}
 
 	inner := load_inline(&res.ud, Inner_Chan(T))
-	queue.init(&inner.receivers, 1)
+	queue.init(&inner.waiters)
 	queue.init(&inner.items, cap)
 
-	id := storage.add(&sched.resources, res)
+	id := add_resource(res)
 	return Chan(T){id = id}
 }
 
 chan_destroy :: proc(self: Chan($T)) {
-	sched := get_scheduler()
-	res, ok := storage.remove(&sched.resources, self.id)
-	if !ok do return
+	res, ok := try_remove_resource(self.id)
+	assert(ok, "attempt to destroy invalid channel")
 
 	inner := load_inline(&res.ud, Inner_Chan(T))
-	for inner.receivers.len > 0 {
-		waiter := queue.pop_front(&inner.receivers)
-		if waiter.case_idx == -1 do send(waiter.handle, Result(T){ok = false})
+	for waiter in queue.pop_front_safe(&inner.waiters) {
+		if waiter.case_idx == -1 do wake(waiter.handle)
 		else do wake_case(waiter.handle, waiter.case_idx, false)
 	}
-
-	assert(inner.items.len == 0, "channel destroyed with unconsumed buffered items (leak)")
-
-	queue.destroy(&inner.receivers)
+	queue.destroy(&inner.waiters)
 	queue.destroy(&inner.items)
 }
 
-chan_try_send :: proc(self: Chan($T), value: T) -> bool {
+chan_try_send :: proc(self: Chan($T), value: T) -> (ok: bool) {
 	inner := get_inner(self)
-	if inner == nil do return false
-
-	sched := get_scheduler()
-
-	for inner.receivers.len > 0 {
-		waiter := queue.pop_front(&inner.receivers)
-
-		if waiter.case_idx == -1 {
-			send(waiter.handle, Result(T){value, true})
-			return true
-		}
-
-		if wake_case(waiter.handle, waiter.case_idx, true) {
-			(^T)(waiter.dest_ptr)^ = value
-			return true
-		}
+	if waiter, ok := queue.pop_front_safe(&inner.waiters); ok {
+		queue.enqueue(&inner.items, value)
+		if waiter.case_idx == -1 do wake(waiter.handle)
+		else do wake_case(waiter.handle, waiter.case_idx, true)
+		return true
 	}
-
 	return false
 }
 
 chan_send :: proc(self: Chan($T), value: T) {
-	if !chan_try_send(self, value) {
-		queue.enqueue(&get_inner(self).items, Result(T){value, true})
+	inner := get_inner(self)
+	queue.enqueue(&inner.items, value)
+
+	if waiter, ok := queue.pop_front_safe(&inner.waiters); ok {
+		if waiter.case_idx == -1 do wake(waiter.handle)
+		else do wake_case(waiter.handle, waiter.case_idx, true)
 	}
 }
 
-chan_try_recv :: proc(self: Chan($T)) -> (T, bool) {
-	inner := get_inner(self)
-	if inner == nil do return {}, false
-
-	if inner.items.len > 0 {
-		result := queue.pop_front(&inner.items)
-		return result.value, result.ok
-	}
-
-	return {}, false
+chan_try_recv :: proc(self: Chan($T)) -> (value: T, ok: bool) {
+	inner := try_get_inner(self) or_return
+	return queue.pop_front_safe(&inner.items)
 }
 
-chan_recv :: proc(self: Chan($T)) -> (T, bool) {
-	inner := get_inner(self)
-	if inner == nil do return {}, false
-
-	if inner.items.len > 0 {
-		result := queue.pop_front(&inner.items)
-		return result.value, result.ok
-	}
-
-	waiter := Waiter {
-		handle   = get_handle(),
-		dest_ptr = nil,
-		case_idx = -1,
-	}
-
-	queue.enqueue(&inner.receivers, waiter)
-	result := recv(Result(T))
-	return result.value, result.ok
-}
-
-clear :: proc(self: Chan($T), destroy_item: Maybe(proc(item: ^T)) = nil) {
-	inner := get_inner(self)
-	if inner == nil do return
-
-	for queue.len(inner.items) > 0 {
-		result := queue.pop_front(&inner.items)
-		if fn, ok := destroy_item.(proc(item: ^T)); ok {
-			if result.ok do fn(&result.value)
+chan_recv :: proc(self: Chan($T)) -> (value: T, ok: bool) {
+	{
+		inner := try_get_inner(self) or_return
+		if queue.len(inner.items) == 0 {
+			queue.enqueue(&inner.waiters, Waiter{get_handle(), -1})
+			yield()
 		}
 	}
+
+	inner := try_get_inner(self) or_return
+	return queue.pop_front_safe(&inner.items)
 }
 
-len :: #force_inline proc(self: Chan($T)) -> int {
+chan_clear :: proc(self: Chan($T), destroy_item: Maybe(proc(item: ^T)) = nil) {
 	inner := get_inner(self)
-	return inner == nil ? 0 : queue.len(inner.items)
+	if fn, ok := destroy_item.(proc(item: ^T)); ok {
+		for {
+			item := queue.pop_front_safe(&inner.items) or_break
+			fn(&item)
+		}
+	} else do queue.clear(&inner.items)
 }
 
-chan_branch :: proc(ch: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
-	Case_State :: struct($T: typeid) {
-		ch:        Chan(T),
-		receivers: ^queue.Queue(Waiter),
-		out:       ^T,
-		out_ok:    ^bool,
-	}
+chan_len :: proc(self: Chan($T)) -> int {
+	inner, ok := try_get_inner(self)
+	return ok ? queue.len(&inner.items) : 0
+}
 
-	id: u64 = storage.INVALID
-	chan: ^Inner_Chan(T)
-	receivers: ^queue.Queue(Waiter)
-
-	if inner := get_inner(ch); inner != nil {
-		id = ch.id
-		chan = inner
-		receivers = &inner.receivers
+chan_branch :: proc(self: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case {
+	State :: struct {
+		ch:     Chan(T),
+		out:    ^T,
+		out_ok: ^bool,
 	}
 
 	ud := [CASE_INLINE_STORAGE]rawptr{}
-	store_inline(&ud, Case_State(T){ch, receivers, out, out_ok})
+	state := load_inline(&ud, State)
+	state^ = State{self, out, out_ok}
 
 	return Case {
-		ud = ud, //
+		ud = ud,
+		//
 		is_alive = proc(self: ^Case) -> bool {
-			state := load_inline(&self.ud, Case_State(T))
-			return is_chan_alive(state.ch.id)
+			state := load_inline(&self.ud, State)
+			_, ok := try_get_resource(state.ch.id)
+			return ok
 		},
 		try = proc(self: ^Case) -> bool {
-			state := load_inline(&self.ud, Case_State(T))
-			sched := get_scheduler()
+			state := load_inline(&self.ud, State)
 			inner := get_inner(state.ch)
-			if inner.items.len > 0 {
-				result := queue.pop_front(&inner.items)
-				if state.out != nil do (^T)(state.out)^ = result.value
-				if state.out_ok != nil do state.out_ok^ = result.ok
+
+			if item, ok := queue.pop_front_safe(&inner.items); ok {
+				if state.out != nil do state.out^ = item
+				if state.out_ok != nil do state.out_ok^ = true
 				return true
 			}
 
 			return false
 		},
 		complete = proc(self: ^Case, ok: bool) {
-			state := load_inline(&self.ud, Case_State(T))
-			if state.out_ok != nil do state.out_ok^ = ok
+			state := load_inline(&self.ud, State)
+			inner := get_inner(state.ch)
+
+			if ok {
+				value, value_ok := queue.pop_front_safe(&inner.items)
+				if state.out != nil do state.out^ = value
+				if state.out_ok != nil do state.out_ok^ = value_ok
+			} else if state.out_ok != nil do state.out_ok^ = false
 		},
 		subscribe = proc(self: ^Case, handle: Handle, case_idx: int) {
-			state := load_inline(&self.ud, Case_State(T))
-			waiter := Waiter {
-				handle   = handle,
-				dest_ptr = state.out,
-				case_idx = case_idx,
-			}
-			queue.enqueue(state.receivers, waiter)
+			state := load_inline(&self.ud, State)
+			inner := get_inner(state.ch)
+			queue.enqueue(&inner.waiters, Waiter{handle, case_idx})
 		},
 		unsubscribe = proc(self: ^Case, handle: Handle) {
-			state := load_inline(&self.ud, Case_State(T))
-			size := state.receivers.len
+			state := load_inline(&self.ud, State)
+			inner := get_inner(state.ch)
+			size := queue.len(inner.waiters)
+
 			for _ in 0 ..< size {
-				waiter := queue.pop_front(state.receivers)
-				if waiter.handle != handle do queue.enqueue(state.receivers, waiter)
+				waiter := queue.pop_front(&inner.waiters)
+				if waiter.handle != handle do queue.enqueue(&inner.waiters, waiter)
 			}
 		},
 	}
-}
-
-@(private)
-is_chan_alive :: proc {
-	is_chan_alive_by_handle,
-	is_chan_alive_by_id,
-}
-
-@(private)
-is_chan_alive_by_id :: proc(id: u64) -> bool {
-	sched := get_scheduler()
-	_, ok := storage.get_ptr(&sched.resources, id)
-	return ok
-}
-
-@(private)
-is_chan_alive_by_handle :: #force_inline proc(chan: Chan($T)) -> bool {
-	return is_chan_alive_by_id(chan.id)
-}
-
-@(private)
-get_inner :: proc(chan: Chan($T)) -> ^Inner_Chan(T) {
-	sched := get_scheduler()
-	res, ok := storage.get_ptr(&sched.resources, chan.id)
-	if !ok do return nil
-	return load_inline(&res.ud, Inner_Chan(T))
 }
 
 chan_into_rawptr :: #force_inline proc(self: Chan($T)) -> rawptr {
@@ -234,5 +168,160 @@ chan_into_rawptr :: #force_inline proc(self: Chan($T)) -> rawptr {
 
 chan_from_rawptr :: #force_inline proc($T: typeid, ptr: rawptr) -> Chan(T) {
 	return Chan(T){id = transmute(u64)(ptr)}
+}
+
+@(private = "file")
+try_get_inner :: proc(self: Chan($T)) -> (inner: ^Inner_Chan(T), ok: bool) {
+	res := try_get_resource(self.id) or_return
+	return load_inline(&res.ud, Inner_Chan(T)), true
+}
+
+@(private = "file")
+get_inner :: proc(self: Chan($T), loc := #caller_location) -> ^Inner_Chan(T) {
+	inner, ok := try_get_inner(self)
+	assert(ok, fmt.tprintf("invalid chan at %v", loc))
+	return inner
+}
+
+@(test)
+test_normal :: proc(t: ^testing.T) {
+	init()
+	defer deinit()
+
+	ch := create_chan(int)
+	defer chan_destroy(ch)
+
+	VALUE :: 123
+
+	producer :: proc(t: ^testing.T, ch: Chan(int)) {
+		chan_send(ch, VALUE)
+	}
+	a := spawn(t, ch, producer)
+
+	consumer :: proc(t: ^testing.T, ch: Chan(int)) {
+		value, ok := chan_recv(ch)
+		testing.expect(t, ok)
+		testing.expect(t, value == VALUE)
+	}
+	b := spawn(t, ch, consumer)
+
+	block(spawn([]Handle{a, b}, proc(handles: []Handle) {
+			join_many(handles)
+		}))
+}
+
+@(test)
+test_fail_to_recv :: proc(t: ^testing.T) {
+	init()
+	defer deinit()
+
+	ch := create_chan(int)
+
+	consumer :: proc(t: ^testing.T, ch: Chan(int)) {
+		value, ok := chan_recv(ch)
+		testing.expect(t, ok == false)
+		testing.expect(t, value == 0)
+	}
+	a := spawn(t, ch, consumer)
+
+	block(spawn(a, ch, proc(a: Handle, ch: Chan(int)) {
+			chan_destroy(ch)
+			join(a)
+		}))
+}
+
+@(test)
+test_try_recv :: proc(t: ^testing.T) {
+	init()
+	defer deinit()
+
+	VALUE :: 123
+
+	ch := create_chan(int)
+	defer chan_destroy(ch)
+
+	chan_send(ch, VALUE)
+
+	value, ok := chan_try_recv(ch)
+	testing.expect(t, ok)
+	testing.expect(t, value == VALUE)
+}
+
+@(test)
+test_try_send_success :: proc(t: ^testing.T) {
+	init()
+	defer deinit()
+
+	VALUE :: 123
+
+	ch := create_chan(int)
+	defer chan_destroy(ch)
+
+	consumer :: proc(t: ^testing.T, ch: Chan(int)) {
+		value, ok := chan_recv(ch)
+		testing.expect(t, ok)
+		testing.expect(t, value == VALUE)
+	}
+	a := spawn(t, ch, consumer)
+
+	producer :: proc(t: ^testing.T, ch: Chan(int)) {
+		ok := chan_try_send(ch, VALUE)
+		testing.expect(t, ok)
+	}
+	b := spawn(t, ch, producer)
+
+	block(spawn([]Handle{a, b}, proc(handles: []Handle) {
+			join_many(handles)
+		}))
+}
+
+@(test)
+test_try_send_fail :: proc(t: ^testing.T) {
+	init()
+	defer deinit()
+
+	VALUE :: 123
+
+	ch := create_chan(int)
+	defer chan_destroy(ch)
+
+	producer :: proc(t: ^testing.T, ch: Chan(int)) {
+		ok := chan_try_send(ch, VALUE)
+		testing.expect(t, ok == false)
+	}
+	a := spawn(t, ch, producer)
+
+	block(spawn(a, proc(a: Handle) {join(a)}))
+}
+
+@(test)
+test_chan_select_alone_win :: proc(t: ^testing.T) {
+	init()
+	defer deinit()
+
+	VALUE :: 123
+
+	ch := create_chan(int)
+	defer chan_destroy(ch)
+
+	consumer :: proc(t: ^testing.T, ch: Chan(int)) {
+		value: int
+		ok: bool
+
+		idx := select({chan_branch(ch, &value, &ok)})
+		testing.expect(t, idx == 0)
+		testing.expect(t, ok)
+		testing.expect(t, value == VALUE)
+	}
+	a := spawn(t, ch, consumer)
+
+	producer :: proc(ch: Chan(int)) {
+		chan_send(ch, VALUE)
+	}
+	b := spawn(ch, producer)
+
+	block(spawn([]Handle{a, b}, proc(handles: []Handle) {
+			join_many(handles)
+		}))
 }
 

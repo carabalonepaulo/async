@@ -79,3 +79,11 @@ wait :: proc {
 	wait_group_wait,
 }
 
+clear :: proc {
+	chan_clear,
+}
+
+len :: proc {
+	chan_len,
+}
+

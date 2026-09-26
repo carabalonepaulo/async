@@ -389,3 +389,20 @@ store_inline :: #force_inline proc(storage: ^[$N]rawptr, value: $T) {
 	(^T)(&storage[0])^ = value
 }
 
+try_get_resource :: #force_inline proc(id: u64) -> (^Resource, bool) {
+	return storage.get_ptr(&scheduler.resources, id)
+}
+
+add_resource :: #force_inline proc(res: Resource) -> u64 {
+	return storage.add(&scheduler.resources, res)
+}
+
+try_remove_resource :: #force_inline proc(id: u64) -> (Resource, bool) {
+	return storage.remove(&scheduler.resources, id)
+}
+
+has_resource :: #force_inline proc(id: u64) -> bool {
+	_, ok := storage.get_ptr(&scheduler.resources, id)
+	return ok
+}
+
