@@ -67,12 +67,13 @@ open :: proc(
 	ok: bool,
 ) {
 	cb :: proc(conn: Conn, ok: bool, ud: rawptr) {
-		handle := transmute(async.Handle)(ud)
-		async.scheduler_send(handle, Pair(Conn, bool){conn, ok})
+		os := transmute(async.One_Shot(Pair(Conn, bool)))(ud)
+		async.send(os, Pair(Conn, bool){conn, ok})
 	}
 
 	path := strings.clone(path)
-	ud := transmute(rawptr)(async.get_handle())
+	os := async.create_one_shot(Pair(Conn, bool))
+	ud := transmute(rawptr)(os)
 
 	ok = send(self, Open_Request{path = path, open_flag = open_flag, ud = ud, cb = cb})
 	if !ok {
@@ -80,7 +81,7 @@ open :: proc(
 		return {}, false
 	}
 
-	res := async.scheduler_recv(Pair(Conn, bool))
+	res := async.recv(os)
 	return res.a, res.b
 }
 

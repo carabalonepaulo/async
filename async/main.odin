@@ -60,26 +60,6 @@ Internal_State :: struct {
 
 Handle :: distinct u64
 
-wake :: proc(self: Handle) {
-	ud, ok := get_internal_state(self)
-	assert(ok, "invalid task id")
-	queue.enqueue(&scheduler.ready, u64(self))
-}
-
-@(deprecated = "'async.send(coro_handle, value)' is deprecated, use 'async.One_Shot(T)' instead")
-scheduler_send :: proc(self: Handle, value: $T) {
-	ud, ok := get_internal_state(self)
-	assert(ok, "invalid task id")
-
-	if !ud.queued {
-		push(ud.co, value)
-		ud.queued = true
-		queue.enqueue(&scheduler.ready, u64(self))
-	} else {
-		panic("multiple send before recv")
-	}
-}
-
 Scheduler :: struct {
 	next_tick:            queue.Queue(Closure),
 	resources:            storage.Storage(Resource),
@@ -276,14 +256,14 @@ reschedule :: #force_inline proc() {
 	yield()
 }
 
-yield :: #force_inline proc() {
-	coro.check(coro.yield(coro.running()))
+wake :: proc(self: Handle) {
+	ud, ok := get_internal_state(self)
+	assert(ok, "invalid task id")
+	queue.enqueue(&scheduler.ready, u64(self))
 }
 
-@(deprecated = "'async.recv(coro_handle, T)' is deprecated, use 'async.One_Shot(T)' instead")
-scheduler_recv :: #force_inline proc($T: typeid) -> T {
-	yield()
-	return pop(T)
+yield :: #force_inline proc() {
+	coro.check(coro.yield(coro.running()))
 }
 
 @(private)
