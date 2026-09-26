@@ -3,7 +3,6 @@ package async
 import "base:builtin"
 import "core:time"
 
-import "coro"
 import "storage"
 
 @(private)
@@ -42,15 +41,13 @@ any :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 
 	yield()
 
-	ud := get_current_internal_state()
 	idx: int
 	ok: bool
 
-	if coro.get_bytes_stored(ud.co) >= size_of(int) {
-		raw_idx := pop(int)
+	if winner, ok := take_winner(); ok {
 		if timeout > 0 do storage.remove(&sched.resources, timer_id)
 
-		idx, ok = decode_idx(raw_idx)
+		idx, ok = decode_idx(winner)
 		if !ok {
 			for &c, i in cases {
 				if i != idx && c.is_alive(&c) {
@@ -99,12 +96,18 @@ all :: proc(cases: []Case, timeout: time.Duration = -1) -> int {
 }
 
 @(private)
-wake_case :: proc(handle: Handle, case_idx: int, ok: bool, loc := #caller_location) -> bool {
-	sched := get_scheduler()
-	state := get_internal_state(handle) or_return
-	if coro.get_bytes_stored(state.co) > 0 do return false
+take_winner :: proc() -> (value: int, ok: bool) {
+	state := get_current_internal_state()
+	value, ok = state.winner.(int)
+	state.winner = nil
+	return
+}
 
-	send(handle, encode_idx(case_idx, ok))
+@(private)
+wake_case :: proc(handle: Handle, case_idx: int, ok: bool, loc := #caller_location) -> bool {
+	state := get_internal_state(handle) or_return
+	state.winner = encode_idx(case_idx, ok)
+	wake(handle)
 	return true
 }
 

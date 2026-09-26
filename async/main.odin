@@ -55,6 +55,7 @@ Internal_State :: struct {
 	id:     u64,
 	queued: bool,
 	hooks:  [Hook]Closure,
+	winner: Maybe(int),
 }
 
 Handle :: distinct u64
