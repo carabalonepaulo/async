@@ -9,7 +9,7 @@ child :: proc(sem: async.Semaphore, cancel: async.Cancel_Token, count: ^int) {
 	for _ in 0 ..< 3 {
 		async.guard(sem, cancel) or_break
 		count^ += 1
-		fmt.printfln("[semaphore] child %v", count^)
+		fmt.printfln("[semaphore] child %v at %v", count^, time.now())
 		async.sleep_or_cancel(1 * time.Second, cancel) or_break
 	}
 }
@@ -20,7 +20,7 @@ parent :: proc() {
 	TASKS :: 10
 
 	cancel := async.create_cancel_token()
-	async.cancel_after(cancel, 1 * time.Second)
+	async.cancel_after(cancel, 2 * time.Second)
 
 	sem := async.create_semaphore(PERMITS)
 	defer async.semaphore_destroy(sem)

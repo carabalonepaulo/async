@@ -30,20 +30,20 @@ create_semaphore :: proc(n: int) -> Semaphore {
 	inner.cap = n
 	queue.init(&inner.waiters)
 
-	sched := get_scheduler()
-	id := storage.add(&sched.resources, res)
-	return Semaphore(id)
+	return Semaphore(add_resource(res))
 }
 
 semaphore_destroy :: proc(self: Semaphore) {
 	sched := get_scheduler()
-	res, ok := storage.remove(&sched.resources, u64(self))
+	res, ok := try_remove_resource(u64(self))
 	assert(ok, "invalid semaphore")
 
 	inner := load_inline(&res.ud, Inner_Semaphore)
+	inner.n = 0
+
 	for queue.len(inner.waiters) > 0 {
 		waiter := queue.pop_front(&inner.waiters)
-		if waiter.case_idx == -1 do scheduler_send(waiter.handle, false)
+		if waiter.case_idx == -1 do wake(waiter.handle)
 		else do wake_case(waiter.handle, waiter.case_idx, false)
 	}
 
@@ -52,41 +52,32 @@ semaphore_destroy :: proc(self: Semaphore) {
 
 try_acquire :: proc(self: Semaphore) -> bool {
 	inner := get_inner(self)
-	if inner.n > 0 {
-		inner.n -= 1
-		return true
-	}
-	return false
+	return _try_acquire(inner)
 }
 
 acquire :: proc(self: Semaphore, cancel: Maybe(Cancel_Token) = nil) -> (ok: bool) {
 	inner := get_inner(self)
-
-	if inner.n > 0 {
-		inner.n -= 1
-		return true
-	}
+	if _try_acquire(inner) do return true
 
 	if cancel, cancel_ok := cancel.(Cancel_Token); cancel_ok {
 		idx := select({branch(cancel), branch(self, &ok)})
 		return idx == 0 ? false : ok
-	} else {
-		queue.enqueue(&inner.waiters, Waiter{get_handle(), -1})
-		return scheduler_recv(bool)
 	}
 
-	return false
+	queue.enqueue(&inner.waiters, Waiter{get_handle(), -1})
+	yield()
+	inner = try_get_inner(self) or_return
+	return _try_acquire(inner)
 }
 
 release :: proc(self: Semaphore) {
 	inner := get_inner(self)
+	assert(inner.n < inner.cap)
+	inner.n += 1
 
 	if waiter, ok := queue.pop_front_safe(&inner.waiters); ok {
-		if waiter.case_idx == -1 do scheduler_send(waiter.handle, true)
+		if waiter.case_idx == -1 do wake(waiter.handle)
 		else do wake_case(waiter.handle, waiter.case_idx, true)
-	} else {
-		assert(inner.n < inner.cap)
-		inner.n += 1
 	}
 }
 
@@ -116,7 +107,8 @@ semaphore_branch :: proc(self: Semaphore, out_ok: ^bool) -> Case {
 		},
 		complete = proc(self: ^Case, ok: bool) {
 			state := load_inline(&self.ud, Case_State)
-			if state.out_ok != nil do state.out_ok^ = ok
+			inner := get_inner(state.sem)
+			if state.out_ok != nil do state.out_ok^ = ok && _try_acquire(inner)
 		},
 		subscribe = proc(self: ^Case, handle: Handle, case_idx: int) {
 			state := load_inline(&self.ud, Case_State)
@@ -156,5 +148,14 @@ get_inner :: proc(self: Semaphore) -> ^Inner_Semaphore {
 	inner, ok := try_get_inner(self)
 	assert(ok, "invalid semaphore")
 	return inner
+}
+
+@(private = "file")
+_try_acquire :: proc(inner: ^Inner_Semaphore) -> bool {
+	if inner.n > 0 {
+		inner.n -= 1
+		return true
+	}
+	return false
 }
 
