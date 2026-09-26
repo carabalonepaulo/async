@@ -177,9 +177,9 @@ try_get_inner :: proc(self: Chan($T)) -> (inner: ^Inner_Chan(T), ok: bool) {
 }
 
 @(private = "file")
-get_inner :: proc(self: Chan($T), loc := #caller_location) -> ^Inner_Chan(T) {
+get_inner :: proc(self: Chan($T)) -> ^Inner_Chan(T) {
 	inner, ok := try_get_inner(self)
-	assert(ok, fmt.tprintf("invalid chan at %v", loc))
+	assert(ok, "invalid chan")
 	return inner
 }
 

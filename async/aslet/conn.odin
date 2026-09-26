@@ -13,7 +13,7 @@ Conn :: struct {
 batch_insert :: proc(self: ^Conn, sql: string, params: [][]Param) -> Result {
 	cb :: proc(rc: Result, ud: rawptr) {
 		handle := transmute(async.Handle)(ud)
-		async.send(handle, rc)
+		async.scheduler_send(handle, rc)
 	}
 
 	ud := transmute(rawptr)(async.get_handle())
@@ -23,14 +23,14 @@ batch_insert :: proc(self: ^Conn, sql: string, params: [][]Param) -> Result {
 	)
 	if !ok do return .Error
 
-	return async.recv(Result)
+	return async.scheduler_recv(Result)
 
 }
 
 conn_exec :: proc(self: ^Conn, sql: string, params: []Param) -> Result {
 	cb :: proc(rc: Result, ud: rawptr) {
 		handle := transmute(async.Handle)(ud)
-		async.send(handle, rc)
+		async.scheduler_send(handle, rc)
 	}
 
 	ud := transmute(rawptr)(async.get_handle())
@@ -40,7 +40,7 @@ conn_exec :: proc(self: ^Conn, sql: string, params: []Param) -> Result {
 	)
 	if !ok do return .Error
 
-	return async.recv(Result)
+	return async.scheduler_recv(Result)
 
 }
 
@@ -53,7 +53,7 @@ conn_fetch :: proc(
 ) -> Result {
 	cb :: proc(rc: Result, ud: rawptr) {
 		handle := transmute(async.Handle)(ud)
-		async.send(handle, rc)
+		async.scheduler_send(handle, rc)
 	}
 
 	run :: proc(
@@ -83,7 +83,7 @@ conn_fetch :: proc(
 	)
 	if !ok do return .Error
 
-	return async.recv(Result)
+	return async.scheduler_recv(Result)
 }
 
 close :: proc(self: ^Conn) -> Result {
@@ -118,7 +118,7 @@ transaction :: proc(
 ) {
 	cb :: proc(transaction: Transaction, ok: bool, ud: rawptr) {
 		handle := transmute(async.Handle)(ud)
-		async.send(handle, Pair(Transaction, bool){transaction, ok})
+		async.scheduler_send(handle, Pair(Transaction, bool){transaction, ok})
 	}
 
 	ud := transmute(rawptr)(async.get_handle())
@@ -134,7 +134,7 @@ transaction :: proc(
 	)
 	if !ok do return {}, false
 
-	res := async.recv(Pair(Transaction, bool))
+	res := async.scheduler_recv(Pair(Transaction, bool))
 	return res.a, res.b
 
 }
@@ -145,13 +145,13 @@ rollback :: proc(self: ^Transaction) -> (ok: bool) {
 
 	cb :: proc(ok: bool, ud: rawptr) {
 		handle := transmute(async.Handle)(ud)
-		async.send(handle, ok)
+		async.scheduler_send(handle, ok)
 	}
 
 	ud := transmute(rawptr)(async.get_handle())
 	send(self.conn.aslet, Rollback_Request{conn = self.conn.conn, ud = ud, cb = cb}) or_return
 
-	return async.recv(bool)
+	return async.scheduler_recv(bool)
 }
 
 commit :: proc(self: ^Transaction) -> (ok: bool) {
@@ -160,13 +160,13 @@ commit :: proc(self: ^Transaction) -> (ok: bool) {
 
 	cb :: proc(ok: bool, ud: rawptr) {
 		handle := transmute(async.Handle)(ud)
-		async.send(handle, ok)
+		async.scheduler_send(handle, ok)
 	}
 
 	ud := transmute(rawptr)(async.get_handle())
 	send(self.conn.aslet, Commit_Request{conn = self.conn.conn, ud = ud, cb = cb}) or_return
 
-	return async.recv(bool)
+	return async.scheduler_recv(bool)
 }
 
 transaction_exec :: proc(self: ^Transaction, sql: string, params: []Param = nil) -> Result {

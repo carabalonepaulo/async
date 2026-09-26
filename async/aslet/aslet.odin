@@ -68,7 +68,7 @@ open :: proc(
 ) {
 	cb :: proc(conn: Conn, ok: bool, ud: rawptr) {
 		handle := transmute(async.Handle)(ud)
-		async.send(handle, Pair(Conn, bool){conn, ok})
+		async.scheduler_send(handle, Pair(Conn, bool){conn, ok})
 	}
 
 	path := strings.clone(path)
@@ -80,7 +80,7 @@ open :: proc(
 		return {}, false
 	}
 
-	res := async.recv(Pair(Conn, bool))
+	res := async.scheduler_recv(Pair(Conn, bool))
 	return res.a, res.b
 }
 

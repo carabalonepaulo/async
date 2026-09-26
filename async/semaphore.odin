@@ -43,7 +43,7 @@ semaphore_destroy :: proc(self: Semaphore) {
 	inner := load_inline(&res.ud, Inner_Semaphore)
 	for queue.len(inner.waiters) > 0 {
 		waiter := queue.pop_front(&inner.waiters)
-		if waiter.case_idx == -1 do send(waiter.handle, false)
+		if waiter.case_idx == -1 do scheduler_send(waiter.handle, false)
 		else do wake_case(waiter.handle, waiter.case_idx, false)
 	}
 
@@ -72,7 +72,7 @@ acquire :: proc(self: Semaphore, cancel: Maybe(Cancel_Token) = nil) -> (ok: bool
 		return idx == 0 ? false : ok
 	} else {
 		queue.enqueue(&inner.waiters, Waiter{get_handle(), -1})
-		return recv(bool)
+		return scheduler_recv(bool)
 	}
 
 	return false
@@ -82,7 +82,7 @@ release :: proc(self: Semaphore) {
 	inner := get_inner(self)
 
 	if waiter, ok := queue.pop_front_safe(&inner.waiters); ok {
-		if waiter.case_idx == -1 do send(waiter.handle, true)
+		if waiter.case_idx == -1 do scheduler_send(waiter.handle, true)
 		else do wake_case(waiter.handle, waiter.case_idx, true)
 	} else {
 		assert(inner.n < inner.cap)

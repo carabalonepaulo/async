@@ -22,7 +22,6 @@ try_send :: proc {
 }
 
 send :: proc {
-	scheduler_send,
 	chan_send,
 	one_shot_send,
 }
@@ -33,7 +32,6 @@ try_recv :: proc {
 }
 
 recv :: proc {
-	scheduler_recv,
 	chan_recv,
 	one_shot_recv,
 }
