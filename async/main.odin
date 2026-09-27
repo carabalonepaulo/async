@@ -62,13 +62,12 @@ Internal_State :: struct {
 Handle :: distinct u64
 
 Scheduler :: struct {
-	next_tick:            queue.Queue(Closure),
-	resources:            storage.Storage(Resource),
-	ready:                queue.Queue(u64),
-	active_cancel_tokens: map[u64]bool,
-	active_coroutines:    uint,
-	time_wheel:           tw.Time_Wheel,
-	finished:             [dynamic]tw.Task,
+	next_tick:         queue.Queue(Closure),
+	resources:         storage.Storage(Resource),
+	ready:             queue.Queue(u64),
+	active_coroutines: uint,
+	time_wheel:        tw.Time_Wheel,
+	finished:          [dynamic]tw.Task,
 }
 
 @(thread_local)
@@ -78,8 +77,6 @@ scheduler_init :: proc() {
 	storage.init(&scheduler.resources, INITIAL_CAPACITY)
 	queue.init(&scheduler.next_tick)
 	queue.init(&scheduler.ready)
-
-	scheduler.active_cancel_tokens = make(map[u64]bool)
 
 	tw.init(&scheduler.time_wheel, 1 * time.Millisecond)
 	scheduler.finished = make([dynamic]tw.Task)
