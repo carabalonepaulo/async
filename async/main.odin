@@ -53,7 +53,6 @@ Internal_State :: struct {
 	co:     ^coro.Coro,
 	fn:     rawptr,
 	id:     u64,
-	queued: bool,
 	hooks:  [Hook]Closure,
 	winner: Maybe(int),
 	args:   u64,
@@ -169,15 +168,14 @@ poll :: proc() {
 
 	ready_count := queue.len(scheduler.ready)
 	for _ in 0 ..< ready_count {
-		task_id := queue.pop_front(&scheduler.ready)
-		res := storage.get(&scheduler.resources, task_id) or_continue
+		handle := queue.pop_front(&scheduler.ready)
+		res := try_get_resource(handle) or_continue
 
 		ud := transmute(^Internal_State)(res.ud[0])
-		ud.queued = false
 		coro.check(coro.resume(ud.co))
 
 		if coro.status(ud.co) == .Dead {
-			storage.remove(&scheduler.resources, task_id)
+			try_remove_resource(handle)
 			coro.check(coro.destroy(ud.co))
 			free(ud)
 			scheduler.active_coroutines -= 1
