@@ -104,6 +104,12 @@ take_winner :: proc() -> (value: int, ok: bool) {
 }
 
 @(private)
+wake_waiter :: proc(handle: Handle, case_idx: int, ok: bool) {
+	if case_idx == -1 do wake(handle)
+	else do wake_case(handle, case_idx, ok)
+}
+
+@(private)
 wake_case :: proc(handle: Handle, case_idx: int, ok: bool, loc := #caller_location) -> bool {
 	state := get_internal_state(handle) or_return
 	state.winner = encode_idx(case_idx, ok)

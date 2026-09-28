@@ -6,17 +6,8 @@ import "coro"
 import "storage"
 
 @(private = "file")
-DEFAULT_WAITERS_CAP :: 2
-
-@(private = "file")
-Waiter :: struct {
-	handle:   Handle,
-	case_idx: int,
-}
-
-@(private = "file")
 Inner_Cancel_Token :: struct {
-	waiters: map[Handle]Waiter,
+	waiters: Waiters,
 }
 
 Cancel_Token :: distinct u64
@@ -29,11 +20,11 @@ create_cancel_token :: proc() -> Cancel_Token {
 		id = auto_cast Internal_Resource.Cancel_Token,
 		drop = proc(self: ^Resource) {
 			inner := load_inline(&self.ud, Inner_Cancel_Token)
-			delete(inner.waiters)
+			deinit_waiters(&inner.waiters)
 		},
 	}
 	inner := load_inline(&res.ud, Inner_Cancel_Token)
-	inner.waiters = make(map[Handle]Waiter, DEFAULT_WAITERS_CAP)
+	init_waiters(&inner.waiters)
 
 	sched := get_scheduler()
 	id := storage.add(&sched.resources, res)
@@ -46,16 +37,10 @@ destroy_cancel_token :: proc(self: Cancel_Token) {
 	assert(ok, "invalid cancel token")
 
 	inner := load_inline(&res.ud, Inner_Cancel_Token)
-	for _, waiter in inner.waiters {
-		if waiter.case_idx == -1 do wake(waiter.handle)
-		else do wake_case(waiter.handle, waiter.case_idx, false)
-	}
-	delete(inner.waiters)
+	deinit_waiters(&inner.waiters)
 }
 
-trigger :: proc(self: Cancel_Token) {
-	destroy_cancel_token(self)
-}
+trigger :: destroy_cancel_token
 
 is_triggered :: proc(self: Cancel_Token) -> bool {
 	sched := get_scheduler()
@@ -71,33 +56,38 @@ cancel_token_wait :: proc(self: Cancel_Token) {
 	handle := get_handle()
 	inner, ok := try_get_inner(self)
 	if !ok do return
-	inner.waiters[handle] = Waiter{handle, -1}
+	add_waiter(&inner.waiters, handle, -1)
 	yield()
 }
 
 cancel_token_branch :: proc(self: Cancel_Token) -> (c: Case) {
+	State :: struct {
+		cancel: Cancel_Token,
+		waiter: Waiter,
+	}
+
 	ud := [CASE_INLINE_STORAGE]rawptr{}
-	ud[0] = transmute(rawptr)(self)
+	load_inline(&ud, State)^ = State{self, {}}
 
 	return Case {
 		ud = ud, //
 		is_alive = proc(self: ^Case) -> bool {
-			id := transmute(u64)(self.ud[0])
+			state := load_inline(&self.ud, State)
 			sched := get_scheduler()
-			_, ok := storage.get_ptr(&sched.resources, id)
+			_, ok := storage.get_ptr(&sched.resources, transmute(u64)(state.cancel))
 			return ok
 		},
 		try = proc(self: ^Case) -> bool {return false},
 		complete = proc(self: ^Case, ok: bool) {},
 		subscribe = proc(self: ^Case, handle: Handle, case_idx: int) {
-			tk := transmute(Cancel_Token)(self.ud[0])
-			inner := get_inner(tk)
-			inner.waiters[handle] = Waiter{handle, case_idx}
+			state := load_inline(&self.ud, State)
+			inner := get_inner(state.cancel)
+			state.waiter = add_waiter(&inner.waiters, handle, case_idx)
 		},
 		unsubscribe = proc(self: ^Case, handle: Handle) {
-			tk := transmute(Cancel_Token)(self.ud[0])
-			inner := get_inner(tk)
-			delete_key(&inner.waiters, handle)
+			state := load_inline(&self.ud, State)
+			inner := get_inner(state.cancel)
+			try_remove_waiter_by_id(&inner.waiters, state.waiter)
 		},
 	}
 }

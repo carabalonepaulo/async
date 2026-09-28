@@ -1,20 +1,13 @@
 package async
 
 import "core:container/queue"
-import "core:fmt"
 import "core:testing"
 
 CHAN_INITIAL_CAPACITY :: 16
 
 @(private = "file")
-Waiter :: struct {
-	handle:   Handle,
-	case_idx: int,
-}
-
-@(private = "file")
 Inner_Chan :: struct($T: typeid) {
-	waiters: queue.Queue(Waiter),
+	waiters: Waiters,
 	items:   queue.Queue(T),
 }
 
@@ -29,7 +22,7 @@ create_chan :: proc($T: typeid, cap: int = CHAN_INITIAL_CAPACITY) -> Chan(T) {
 	}
 
 	inner := load_inline(&res.ud, Inner_Chan(T))
-	queue.init(&inner.waiters)
+	init_waiters(&inner.waiters)
 	queue.init(&inner.items, cap)
 
 	id := add_resource(res)
@@ -41,20 +34,15 @@ chan_destroy :: proc(self: Chan($T)) {
 	assert(ok, "attempt to destroy invalid channel")
 
 	inner := load_inline(&res.ud, Inner_Chan(T))
-	for waiter in queue.pop_front_safe(&inner.waiters) {
-		if waiter.case_idx == -1 do wake(waiter.handle)
-		else do wake_case(waiter.handle, waiter.case_idx, false)
-	}
-	queue.destroy(&inner.waiters)
+	deinit_waiters(&inner.waiters)
 	queue.destroy(&inner.items)
 }
 
 chan_try_send :: proc(self: Chan($T), value: T) -> (ok: bool) {
 	inner := get_inner(self)
-	if waiter, ok := queue.pop_front_safe(&inner.waiters); ok {
+	if handle, case_idx, ok := try_remove_waiter(&inner.waiters); ok {
 		queue.enqueue(&inner.items, value)
-		if waiter.case_idx == -1 do wake(waiter.handle)
-		else do wake_case(waiter.handle, waiter.case_idx, true)
+		wake_waiter(Handle(handle), case_idx, true)
 		return true
 	}
 	return false
@@ -64,9 +52,8 @@ chan_send :: proc(self: Chan($T), value: T) {
 	inner := get_inner(self)
 	queue.enqueue(&inner.items, value)
 
-	if waiter, ok := queue.pop_front_safe(&inner.waiters); ok {
-		if waiter.case_idx == -1 do wake(waiter.handle)
-		else do wake_case(waiter.handle, waiter.case_idx, true)
+	if handle, case_idx, ok := try_remove_waiter(&inner.waiters); ok {
+		wake_waiter(Handle(handle), case_idx, true)
 	}
 }
 
@@ -79,7 +66,7 @@ chan_recv :: proc(self: Chan($T)) -> (value: T, ok: bool) {
 	{
 		inner := try_get_inner(self) or_return
 		if queue.len(inner.items) == 0 {
-			queue.enqueue(&inner.waiters, Waiter{get_handle(), -1})
+			add_waiter(&inner.waiters, get_handle(), -1)
 			yield()
 		}
 	}
@@ -108,11 +95,11 @@ chan_branch :: proc(self: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case 
 		ch:     Chan(T),
 		out:    ^T,
 		out_ok: ^bool,
+		waiter: Waiter,
 	}
 
 	ud := [CASE_INLINE_STORAGE]rawptr{}
-	state := load_inline(&ud, State)
-	state^ = State{self, out, out_ok}
+	load_inline(&ud, State)^ = State{self, out, out_ok, {}}
 
 	return Case {
 		ud = ud,
@@ -147,17 +134,12 @@ chan_branch :: proc(self: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case 
 		subscribe = proc(self: ^Case, handle: Handle, case_idx: int) {
 			state := load_inline(&self.ud, State)
 			inner := get_inner(state.ch)
-			queue.enqueue(&inner.waiters, Waiter{handle, case_idx})
+			state.waiter = add_waiter(&inner.waiters, handle, case_idx)
 		},
 		unsubscribe = proc(self: ^Case, handle: Handle) {
 			state := load_inline(&self.ud, State)
 			inner := get_inner(state.ch)
-			size := queue.len(inner.waiters)
-
-			for _ in 0 ..< size {
-				waiter := queue.pop_front(&inner.waiters)
-				if waiter.handle != handle do queue.enqueue(&inner.waiters, waiter)
-			}
+			try_remove_waiter_by_id(&inner.waiters, state.waiter)
 		},
 	}
 }
