@@ -51,6 +51,7 @@ branch :: proc {
 	cancel_token_branch,
 	semaphore_branch,
 	one_shot_branch,
+	wait_group_branch,
 }
 
 run :: proc {

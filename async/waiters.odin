@@ -47,7 +47,7 @@ deinit_waiters :: proc(self: ^Waiters) {
 	self.free = List{-1, -1}
 }
 
-add_waiter :: proc(self: ^Waiters, handle: Handle, case_idx: int) -> Waiter {
+add_waiter :: proc(self: ^Waiters, handle: Handle, case_idx: int = -1) -> Waiter {
 	idx, waiter := find_empty(self)
 	waiter.handle = handle
 	waiter.case_idx = case_idx

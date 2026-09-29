@@ -28,6 +28,7 @@ Internal_Resource :: enum {
 	Cancel_Token,
 	Semaphore,
 	One_Shot,
+	Wait_Group,
 }
 
 Resource :: struct {
