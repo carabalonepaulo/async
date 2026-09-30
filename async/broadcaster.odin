@@ -3,11 +3,14 @@ package async
 import "base:builtin"
 import "core:testing"
 
+import il "index_list"
+import "storage"
+
 @(private = "file")
 Inner :: struct($T: typeid) {
 	idx:       int,
 	items:     []T,
-	receivers: map[u64]bool,
+	receivers: il.Index_List(u64),
 	drop:      proc(value: ^T),
 }
 
@@ -19,11 +22,13 @@ Broadcaster :: struct($T: typeid) {
 create_broadcaster :: proc($T: typeid, cap: int, drop: proc(value: ^T) = nil) -> Broadcaster(T) {
 	assert(cap > 0, "broadcaster capacity must be greater than zero")
 
-	res := Resource{}
+	res := Resource {
+		id = auto_cast Internal_Resource.Broadcaster,
+	}
 	sender := load_inline(&res.ud, Inner(T))
 	sender.items = make([]T, cap)
-	sender.receivers = make(map[u64]bool)
 	sender.drop = drop
+	il.init(&sender.receivers)
 
 	id := add_resource(res)
 	return Broadcaster(T){id = id}
@@ -42,22 +47,15 @@ destroy_broadcaster :: proc(self: Broadcaster($T)) {
 		for i in idx ..< sender.idx do sender.drop(&sender.items[i % cap])
 	}
 
-	// TODO: replace map[u64]bool
-	receivers := make([]u64, builtin.len(sender.receivers))
-	defer delete(receivers)
-
-	i := 0
-	for id in sender.receivers {
-		receivers[i] = id
-		i += 1
-	}
-
-	for raw_id in receivers {
-		receiver := transmute(Broadcaster_Receiver(T))(raw_id)
+	it := il.iter(&sender.receivers)
+	for _, raw_id in il.iterate(&it) {
+		receiver := Broadcaster_Receiver(T) {
+			id = raw_id^,
+		}
 		unsubscribe(receiver)
 	}
+	il.deinit(&sender.receivers)
 
-	delete(sender.receivers)
 	delete(sender.items)
 }
 
@@ -69,9 +67,10 @@ subscribe :: proc(self: Broadcaster($T)) -> Broadcaster_Receiver(T) {
 	receiver.idx = sender.idx
 	receiver.sender = sender
 
-	id := add_resource(res)
-	sender.receivers[id] = true
+	entry := storage.entry(&scheduler.resources)
+	receiver.id = il.add(&sender.receivers, storage.get_id(&entry))
 
+	id := storage.insert(&entry, res)
 	return Broadcaster_Receiver(T){id = id}
 }
 
@@ -87,8 +86,9 @@ broadcaster_send :: proc(self: Broadcaster($T), value: T) {
 	sender.items[idx] = value
 	sender.idx += 1
 
-	for raw_id in sender.receivers {
-		receiver := get_receiver(transmute(Broadcaster_Receiver(T))(raw_id))
+	it := il.iter(&sender.receivers)
+	for _, raw_id in il.iterate(&it) {
+		receiver := get_receiver(transmute(Broadcaster_Receiver(T))(raw_id^))
 		handle := receiver.waiter.(Handle) or_continue
 		wake_case(handle, receiver.case_idx, true)
 		receiver.waiter = nil
@@ -98,6 +98,7 @@ broadcaster_send :: proc(self: Broadcaster($T), value: T) {
 
 @(private = "file")
 Inner_Receiver :: struct($T: typeid) {
+	id:       il.Id,
 	idx:      int,
 	sender:   ^Inner(T),
 	waiter:   Maybe(Handle),
@@ -111,13 +112,13 @@ Broadcaster_Receiver :: struct($T: typeid) {
 
 unsubscribe :: proc(self: Broadcaster_Receiver($T)) {
 	res, ok := try_remove_resource(self.id)
-	assert(ok, "invalid broadcaster")
+	assert(ok, "invalid broadcaster receiver")
 
 	inner := load_inline(&res.ud, Inner_Receiver(T))
 	if handle, ok := inner.waiter.(Handle); ok {
 		wake_waiter(handle, inner.case_idx, false)
 	}
-	delete_key(&inner.sender.receivers, self.id)
+	il.remove(&inner.sender.receivers, inner.id)
 }
 
 broadcaster_try_recv :: proc(self: Broadcaster_Receiver($T)) -> (value: T, missed: int, ok: bool) {

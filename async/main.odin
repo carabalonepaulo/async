@@ -15,7 +15,7 @@ import "vmem"
 
 INITIAL_CAPACITY :: #config(ASYNC_INITIAL_CAPACITY, 64)
 
-RESOURCE_INLINE_STORAGE :: 16
+RESOURCE_INLINE_STORAGE :: 24
 CASE_INLINE_STORAGE :: 5
 
 DEFAULT_STACK_SIZE :: #config(ASYNC_DEFAULT_STACK_SIZE, 2 * mem.Megabyte)
@@ -29,6 +29,7 @@ Internal_Resource :: enum {
 	Semaphore,
 	One_Shot,
 	Wait_Group,
+	Broadcaster,
 }
 
 Resource :: struct {
