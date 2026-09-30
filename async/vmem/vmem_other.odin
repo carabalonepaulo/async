@@ -7,7 +7,7 @@
 #+build !windows
 package vmem
 
-_reserve :: proc "contextless" (size: int) -> ([]u8, bool) {
+_reserve :: proc "contextless" (size: uint) -> ([]u8, bool) {
 	return nil, false
 }
 

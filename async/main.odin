@@ -316,7 +316,7 @@ create_desc :: proc(raw_fn: proc "c" (co: ^coro.Coro), ud: ^Internal_State) -> (
 	desc.alloc_cb = proc "c" (size: c.size_t, allocator_data: rawptr) -> rawptr {
 		context = runtime.default_context()
 		ud := (^Internal_State)(allocator_data)
-		buf, _ := vmem.reserve(int(size))
+		buf, _ := vmem.reserve(uint(size))
 		return raw_data(buf)
 	}
 	desc.dealloc_cb = proc "c" (ptr: rawptr, size: c.size_t, allocator_data: rawptr) {

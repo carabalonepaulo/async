@@ -3,7 +3,7 @@ package vmem
 
 import "core:sys/posix"
 
-_reserve :: proc "contextless" (size: int) -> ([]u8, bool) {
+_reserve :: proc "contextless" (size: uint) -> ([]u8, bool) {
 	prot: posix.Prot_Flags
 
 	when ODIN_OS == .Darwin || ODIN_OS == .OpenBSD {
@@ -25,7 +25,7 @@ _reserve :: proc "contextless" (size: int) -> ([]u8, bool) {
 		prot = PROT_MPROTECT({.READ, .WRITE})
 	}
 
-	addr := posix.mmap(nil, size, prot, {.ANONYMOUS, .PRIVATE})
+	addr := posix.mmap(0, size, prot, {.ANONYMOUS, .PRIVATE})
 	if addr == posix.MAP_FAILED do return {}, false
 	return (([^]u8)(addr))[:size], true
 }

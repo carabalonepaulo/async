@@ -4,7 +4,11 @@ import "core:c"
 import "core:fmt"
 import "core:strings"
 
-foreign import minicoro "minicoro.lib"
+when ODIN_OS == .Windows {
+	foreign import minicoro "lib/win/minicoro.lib"
+} else when ODIN_OS == .Linux {
+	foreign import minicoro "lib/linux/libminicoro.a"
+}
 
 Coro :: struct {}
 

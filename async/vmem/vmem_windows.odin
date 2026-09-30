@@ -65,7 +65,7 @@ veh :: proc "system" (info: ^windows.EXCEPTION_POINTERS) -> i32 {
 	return windows.EXCEPTION_CONTINUE_EXECUTION
 }
 
-_reserve :: proc(size: int) -> ([]u8, bool) {
+_reserve :: proc(size: uint) -> ([]u8, bool) {
 	ensure_state()
 
 	data := windows.VirtualAlloc(nil, uint(size), windows.MEM_RESERVE, windows.PAGE_READWRITE)

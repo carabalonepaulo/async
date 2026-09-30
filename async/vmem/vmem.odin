@@ -8,7 +8,7 @@ Virtual_Block :: struct {
 	size: int,
 }
 
-reserve :: proc(size: int) -> ([]u8, bool) {
+reserve :: proc(size: uint) -> ([]u8, bool) {
 	return _reserve(size)
 }
 
