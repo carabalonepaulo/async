@@ -27,6 +27,7 @@ Index_List :: struct($T: typeid) {
 	items: [dynamic]Item(T),
 	used:  List,
 	free:  List,
+	count: int,
 }
 
 Id :: distinct u64
@@ -35,12 +36,18 @@ init :: proc(self: ^Index_List($T)) {
 	self.items = make([dynamic]Item(T))
 	self.used = List{-1, -1}
 	self.free = List{-1, -1}
+	self.count = 0
 }
 
 deinit :: proc(self: ^Index_List($T)) {
 	builtin.delete(self.items)
 	self.used = List{-1, -1}
 	self.free = List{-1, -1}
+	self.count = 0
+}
+
+len :: #force_inline proc(self: ^Index_List($T)) -> int {
+	return self.count
 }
 
 enqueue :: add
@@ -57,6 +64,8 @@ dequeue :: proc(self: ^Index_List($T)) -> (value: T, ok: bool) {
 		item.gen += 1
 		unlink(&self.used, idx, item, self.items[:])
 		link(&self.free, idx, item, self.items[:])
+		self.count -= 1
+
 		return
 	}
 }
@@ -65,6 +74,7 @@ add :: proc(self: ^Index_List($T), value: T) -> Id {
 	idx, item := find_empty(self)
 	item.value = value
 	link(&self.used, idx, item, self.items[:])
+	self.count += 1
 	return Id(pack_key(u32(idx), item.gen))
 }
 
@@ -75,6 +85,7 @@ remove :: proc(self: ^Index_List($T), id: Id) -> (ok: bool) {
 		item.gen += 1
 		unlink(&self.used, idx, item, self.items[:])
 		link(&self.free, idx, item, self.items[:])
+		self.count -= 1
 	}
 	return true
 }
@@ -108,6 +119,7 @@ clear :: proc(self: ^Index_List($T)) {
 	builtin.clear(&self.items)
 	self.used = List{-1, -1}
 	self.free = List{-1, -1}
+	self.count = 0
 }
 
 @(private = "file")
@@ -191,6 +203,7 @@ test_init_and_deinit :: proc(t: ^testing.T) {
 	testing.expect_value(t, w.used.tail, -1)
 	testing.expect_value(t, w.free.head, -1)
 	testing.expect_value(t, w.free.tail, -1)
+	testing.expect_value(t, len(&w), 0)
 }
 
 @(test)
@@ -203,6 +216,7 @@ test_add_and_find :: proc(t: ^testing.T) {
 	id2 := add(&w, 200)
 	id3 := add(&w, 300)
 
+	testing.expect_value(t, len(&w), 3)
 	testing.expect_value(t, builtin.len(w.items), 3)
 
 	idx, item, ok := get_ptr(&w, id2)
@@ -224,8 +238,11 @@ test_try_remove :: proc(t: ^testing.T) {
 	id2 := add(&w, 200)
 	add(&w, 300)
 
+	testing.expect_value(t, len(&w), 3)
+
 	ok := remove(&w, id2)
 	testing.expect(t, ok)
+	testing.expect_value(t, len(&w), 2)
 
 	_, _, found := get_ptr(&w, 200)
 	testing.expect(t, !found)
@@ -235,6 +252,7 @@ test_try_remove :: proc(t: ^testing.T) {
 
 	ok_again := remove(&w, id2)
 	testing.expect(t, !ok_again)
+	testing.expect_value(t, len(&w), 2)
 }
 
 @(test)
@@ -249,10 +267,12 @@ test_remove_head_and_tail :: proc(t: ^testing.T) {
 	remove(&w, id1)
 	testing.expect_value(t, w.used.head, 1)
 	testing.expect_value(t, w.used.tail, 1)
+	testing.expect_value(t, len(&w), 1)
 
 	remove(&w, id2)
 	testing.expect_value(t, w.used.head, -1)
 	testing.expect_value(t, w.used.tail, -1)
+	testing.expect_value(t, len(&w), 0)
 }
 
 @(test)
@@ -324,6 +344,7 @@ test_clear :: proc(t: ^testing.T) {
 	testing.expect_value(t, w.used.tail, -1)
 	testing.expect_value(t, w.free.head, -1)
 	testing.expect_value(t, w.free.tail, -1)
+	testing.expect_value(t, len(&w), 0)
 }
 
 @(test)
