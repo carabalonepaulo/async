@@ -5,7 +5,6 @@ Single threaded cooperative coroutine scheduler, all primitives included.
 ### Primitives
 - spawn
 - yield/wake
-- recv/send (wake with value)
 - join/join_many
 - sleep/sleep_or_cancel
 - timer/next_tick/reschedule
@@ -16,6 +15,7 @@ Single threaded cooperative coroutine scheduler, all primitives included.
 - wait group
 - semaphore
 - one shot
+- broadcaster
 
 ### Packages
 - io (nbio)

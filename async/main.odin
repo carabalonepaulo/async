@@ -104,6 +104,8 @@ scheduler_deinit :: proc() {
 
 	tw.deinit(&scheduler.time_wheel)
 	delete(scheduler.finished)
+
+	scheduler = {}
 }
 
 scheduler_run :: proc(sleep: time.Duration = 0) {

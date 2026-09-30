@@ -24,16 +24,19 @@ try_send :: proc {
 send :: proc {
 	chan_send,
 	one_shot_send,
+	broadcaster_send,
 }
 
 try_recv :: proc {
 	chan_try_recv,
 	one_shot_try_recv,
+	broadcaster_try_recv,
 }
 
 recv :: proc {
 	chan_recv,
 	one_shot_recv,
+	broadcaster_recv,
 }
 
 spawn :: proc {
