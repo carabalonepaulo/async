@@ -3,7 +3,10 @@ package async
 import "base:builtin"
 import "core:testing"
 
+@(private = "file")
 INDEX_BITS :: 32
+
+@(private = "file")
 INDEX_MASK :: (1 << INDEX_BITS) - 1
 
 @(private = "file")
@@ -34,12 +37,14 @@ Waiters :: struct {
 	used:    List,
 }
 
+@(private)
 init_waiters :: proc(self: ^Waiters) {
 	self.waiters = make([dynamic]Slot)
 	self.used = List{-1, -1}
 	self.free = List{-1, -1}
 }
 
+@(private)
 deinit_waiters :: proc(self: ^Waiters) {
 	for handle, case_idx in try_remove_waiter(self) do wake_waiter(Handle(handle), case_idx, false)
 	builtin.delete(self.waiters)
@@ -47,6 +52,7 @@ deinit_waiters :: proc(self: ^Waiters) {
 	self.free = List{-1, -1}
 }
 
+@(private)
 add_waiter :: proc(self: ^Waiters, handle: Handle, case_idx: int = -1) -> Waiter {
 	idx, waiter := find_empty(self)
 	waiter.handle = handle
@@ -55,6 +61,7 @@ add_waiter :: proc(self: ^Waiters, handle: Handle, case_idx: int = -1) -> Waiter
 	return Waiter(pack_key(u32(idx), waiter.gen))
 }
 
+@(private)
 try_remove_waiter :: proc(self: ^Waiters) -> (handle: Handle, case_idx: int, ok: bool) {
 	if self.used.head == -1 do return 0, 0, false
 	#no_bounds_check {
@@ -72,6 +79,7 @@ try_remove_waiter :: proc(self: ^Waiters) -> (handle: Handle, case_idx: int, ok:
 	}
 }
 
+@(private)
 try_remove_waiter_by_id :: proc(self: ^Waiters, id: Waiter) -> (ok: bool) {
 	#no_bounds_check {
 		idx, waiter := get_ptr(self, id) or_return
@@ -81,6 +89,13 @@ try_remove_waiter_by_id :: proc(self: ^Waiters, id: Waiter) -> (ok: bool) {
 		link(&self.free, idx, &waiter.node, self.waiters[:])
 	}
 	return true
+}
+
+@(private)
+clear_waiters :: proc(self: ^Waiters) {
+	builtin.clear(&self.waiters)
+	self.used = List{-1, -1}
+	self.free = List{-1, -1}
 }
 
 @(private = "file")
@@ -94,30 +109,6 @@ get_ptr :: proc(self: ^Waiters, id: Waiter) -> (int, ^Slot, bool) {
 	}
 	return 0, nil, false
 }
-
-waiters_clear :: proc(self: ^Waiters) {
-	builtin.clear(&self.waiters)
-	self.used = List{-1, -1}
-	self.free = List{-1, -1}
-}
-
-// Iter :: struct {
-// 	self: ^Waiters,
-// 	idx:  int,
-// }
-
-// waiters_iter :: proc(self: ^Waiters) -> Iter {
-// 	return Iter{self, self.used.head}
-// }
-
-// iterate_waiters :: proc(it: ^Iter) -> (handle: u64, case_idx: int, ok: bool) {
-// 	curr := it.idx
-// 	if curr == -1 do return 0, 0, false
-
-// 	waiter := &it.self.waiters[curr]
-// 	it.idx = waiter.node.next
-// 	return waiter.handle, waiter.case_idx, true
-// }
 
 @(private = "file")
 find_empty :: proc(self: ^Waiters) -> (int, ^Slot) {
@@ -133,7 +124,7 @@ find_empty :: proc(self: ^Waiters) -> (int, ^Slot) {
 	}
 }
 
-@(private)
+@(private = "file")
 link :: proc(list: ^List, idx: int, node: ^Node, container: []Slot) {
 	if list.head == -1 {
 		list.head = idx
@@ -147,7 +138,7 @@ link :: proc(list: ^List, idx: int, node: ^Node, container: []Slot) {
 	}
 }
 
-@(private)
+@(private = "file")
 unlink :: proc(list: ^List, idx: int, node: ^Node, container: []Slot) {
 	if node.prev != -1 do container[node.prev].node.next = node.next
 	else do list.head = node.next
@@ -159,12 +150,12 @@ unlink :: proc(list: ^List, idx: int, node: ^Node, container: []Slot) {
 	node.next = -1
 }
 
-@(private)
+@(private = "file")
 pack_key :: proc(idx: u32, gen: u32) -> u64 {
 	return ((u64(gen)) << INDEX_BITS) | (u64(idx) & INDEX_MASK)
 }
 
-@(private)
+@(private = "file")
 unpack_key :: proc(key: u64) -> (u32, u32) {
 	idx := u32(key & INDEX_MASK)
 	gen := u32(key >> INDEX_BITS)
@@ -308,7 +299,7 @@ test_clear :: proc(t: ^testing.T) {
 	add_waiter(&w, 100, 1)
 	add_waiter(&w, 200, 2)
 
-	waiters_clear(&w)
+	clear_waiters(&w)
 
 	testing.expect_value(t, builtin.len(w.waiters), 0)
 	testing.expect_value(t, w.used.head, -1)
