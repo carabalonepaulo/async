@@ -1,124 +1,240 @@
-package async_http_server_router
+package async_http_server_router_v2
 
-import ".."
+import "base:builtin"
+import "core:fmt"
+import "core:testing"
 
-Middleware :: struct {}
+import server ".."
+
+Route :: struct {
+	method:     server.Method,
+	frags:      []Fragment,
+	handler:    rawptr,
+	handlers:   []Handler,
+	trampoline: proc(
+		handler_ptr: rawptr,
+		state: rawptr,
+		ctx: ^Context,
+		path: string,
+		frags: []Fragment,
+		match_ctx: []Param_Range,
+	) -> bool,
+}
 
 Context :: struct {
-	ud:       rawptr,
-	req:      ^server.Request,
-	res:      ^server.Response,
-	//
-	handlers: []Handler,
-	idx:      int,
+	ud:           rawptr,
+	req:          ^server.Request,
+	res:          ^server.Response,
+	handlers:     []Handler,
+	idx:          int,
+	target_route: ^Route,
+	ranges:       []Param_Range,
 }
 
 Handler :: proc(ctx: ^Context) -> bool
 
-Route :: struct {
-	method:   server.Method,
-	// method:   string,
-	path:     string,
-	handlers: [dynamic]Handler,
-}
-
-Router :: struct {
+Router :: struct($S: typeid) {
+	state:    ^S,
 	handlers: [dynamic]Handler,
 	routes:   [dynamic]Route,
-	ud:       rawptr,
 }
 
-init :: proc(self: ^Router, ud: rawptr = nil) {
-	self.ud = ud
+init :: proc(self: ^Router($S), state: ^S) {
+	self.state = state
 	self.handlers = make([dynamic]Handler)
 	self.routes = make([dynamic]Route)
 }
 
-deinit :: proc(self: ^Router) {
-	delete(self.handlers)
-	for route in self.routes do delete(route.handlers)
-	delete(self.routes)
+deinit :: proc(self: ^Router($S)) {
+	builtin.delete(self.handlers)
+	for route in self.routes do builtin.delete(route.frags)
+	builtin.delete(self.routes)
 }
 
-next :: proc(ctx: ^Context) {
-	ctx.idx += 1
-	if ctx.idx < len(ctx.handlers) {
-		ctx.handlers[ctx.idx](ctx)
-	}
-}
-
-use :: proc(router: ^Router, handler: Handler) {
+use :: proc(router: ^Router($S), handler: Handler) {
 	append(&router.handlers, handler)
 }
 
-dispatch :: proc(ud: rawptr, req: ^server.Request, res: ^server.Response) -> bool {
-	router := (^Router)(ud)
+route :: proc {
+	route_static,
+	route_dyn,
+}
 
-	target_route: ^Route = nil
-	for &route in router.routes {
-		if route.method == req.method && route.path == req.uri {
-			target_route = &route
-			break
-		}
+route_static :: proc(
+	self: ^Router($S),
+	method: server.Method,
+	pattern: string,
+	handler: proc(state: ^S, ctx: ^Context) -> bool,
+	mws: ..Handler,
+) {
+	Empty :: struct {}
+	frags, err := parse_pattern(pattern, Empty)
+	if err != .None do fmt.panicf("failed to parse static route '%s': %v", pattern, err)
+
+	handlers := make([]Handler, len(mws))
+	copy_slice(handlers, mws)
+
+	r := Route {
+		method = method,
+		frags = frags,
+		handler = auto_cast handler,
+		handlers = handlers,
+		trampoline = proc(
+			handler: rawptr,
+			state: rawptr,
+			ctx: ^Context,
+			_: string,
+			_: []Fragment,
+			_: []Param_Range,
+		) -> bool {
+			typed_handler := (proc(state: ^S, ctx: ^Context) -> bool)(handler)
+			return typed_handler((^S)(state), ctx)
+		},
 	}
 
-	if target_route == nil && req.method == .Head {
-		for &route in router.routes {
-			if route.method == .Get && route.path == req.uri {
-				target_route = &route
-				break
-			}
-		}
+	append(&self.routes, r)
+}
+
+route_dyn :: proc(
+	self: ^Router($S),
+	method: server.Method,
+	pattern: string,
+	$T: typeid,
+	handler: proc(state: ^S, ctx: ^Context, params: ^T) -> bool,
+	mws: ..Handler,
+) {
+	frags, err := parse_pattern(pattern, T)
+	if err != .None do fmt.panicf("failed to parse route '%s': %v", pattern, err)
+
+	handlers := make([]Handler, len(mws))
+	copy_slice(handlers, mws)
+
+	r := Route {
+		method = method,
+		frags = frags,
+		handler = auto_cast handler,
+		handlers = handlers,
+		trampoline = proc(
+			handler: rawptr,
+			state: rawptr,
+			ctx: ^Context,
+			path: string,
+			frags: []Fragment,
+			ranges: []Param_Range,
+		) -> bool {
+			params: T
+			if !deserialize_params(path, frags, ranges, &params) do return invalid_params(ctx)
+
+			typed_handler := (proc(state: ^S, ctx: ^Context, params: ^T) -> bool)(handler)
+			return typed_handler((^S)(state), ctx, &params)
+		},
 	}
 
-	pipeline := make([dynamic]Handler, context.temp_allocator)
-	for mw in router.handlers do append(&pipeline, mw)
+	append(&self.routes, r)
+}
 
+dispatch :: proc(self: ^Router($S)) -> server.Request_Handler {
+	return proc(ud: rawptr, req: ^server.Request, res: ^server.Response) -> bool {
+			self := (^Router(S))(ud)
+			return _dispatch(self, req, res)
+		}
+}
+
+@(private = "file")
+find_route :: proc(
+	self: ^Router($S),
+	req: ^server.Request,
+	ranges: ^[dynamic]Param_Range,
+) -> ^Route {
+	for &r in self.routes {
+		if r.method != req.method do continue
+		if match_pattern(req.uri, r.frags, ranges) do return &r
+	}
+
+	if req.method != .Head do return nil
+
+	for &r in self.routes {
+		if r.method != .Get do continue
+		if match_pattern(req.uri, r.frags, ranges) do return &r
+	}
+
+	return nil
+}
+
+@(private = "file")
+_dispatch :: proc(self: ^Router($S), req: ^server.Request, res: ^server.Response) -> bool {
+	ranges := make([dynamic]Param_Range, 0, 4)
+	defer builtin.delete(ranges)
+
+	handlers := make([dynamic]Handler, len(self.handlers))
+	defer builtin.delete(handlers)
+	copy_slice(handlers[:], self.handlers[:])
+
+	target_route := find_route(self, req, &ranges)
 	if target_route != nil {
-		for h in target_route.handlers do append(&pipeline, h)
-	} else {
-		append(&pipeline, not_found)
-	}
+		append_elems(&handlers, ..target_route.handlers)
+		append(&handlers, endpoint_handler)
+	} else do append(&handlers, not_found)
 
 	ctx := Context {
-		ud       = router.ud,
-		req      = req,
-		res      = res,
-		handlers = pipeline[:],
-		idx      = 0,
+		ud           = self.state,
+		req          = req,
+		res          = res,
+		handlers     = handlers[:],
+		idx          = 0,
+		target_route = target_route,
+		ranges       = ranges[:],
 	}
 
-	if len(ctx.handlers) > 0 {
-		return ctx.handlers[0](&ctx)
-	}
+	return next(&ctx)
+}
 
+next :: proc(ctx: ^Context) -> bool {
+	if ctx.idx < len(ctx.handlers) {
+		handler := ctx.handlers[ctx.idx]
+		ctx.idx += 1
+		return handler(ctx)
+	}
 	return true
 }
 
-post :: proc(router: ^Router, path: string, handler: Handler, mws: ..Handler) {
-	route := Route {
-		method = .Post,
-		path   = path,
-	}
+@(private = "file")
+endpoint_handler :: proc(ctx: ^Context) -> bool {
+	if ctx.target_route == nil do return not_found(ctx)
 
-	for mw in mws do append(&route.handlers, mw)
-	append(&route.handlers, handler)
-	append(&router.routes, route)
-}
-
-get :: proc(router: ^Router, path: string, handler: Handler, mws: ..Handler) {
-	route := Route {
-		method = .Get,
-		path   = path,
-	}
-
-	for mw in mws do append(&route.handlers, mw)
-	append(&route.handlers, handler)
-	append(&router.routes, route)
+	r := ctx.target_route
+	return r.trampoline(r.handler, ctx.ud, ctx, ctx.req.uri, r.frags, ctx.ranges)
 }
 
 @(private = "file")
 not_found :: proc(ctx: ^Context) -> bool {
 	return server.send_text(ctx.res, .Not_Found, "404 Not Found")
+}
+
+@(private = "file")
+invalid_params :: proc(ctx: ^Context) -> bool {
+	return server.send_text(ctx.res, .Internal_Server_Error, "Invalid Params")
+}
+
+@(test)
+test_defining_route :: proc(t: ^testing.T) {
+	State :: struct {
+		t: ^testing.T,
+	}
+
+	state := State{t}
+
+	r: Router(State)
+	init(&r, &state)
+	defer deinit(&r)
+
+	Hello_Params :: struct {
+		name: string,
+	}
+
+	HELLO :: proc(state: ^State, ctx: ^Context, params: ^Hello_Params) -> bool {
+		return false
+	}
+	route(&r, .Get, "/hello-{name}", Hello_Params, HELLO)
 }
 
