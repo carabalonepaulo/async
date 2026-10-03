@@ -105,7 +105,7 @@ http_server_demo :: proc() {
 
 	router.get(
 		&r,
-		"/hello-{id}/{name}",
+		"/hello/{id}/{name}",
 		Params,
 		proc(state: ^State, ctx: ^router.Context, params: ^Params) -> bool {
 			text := fmt.tprintf("hello, %s! id: %v", params.name, params.id)

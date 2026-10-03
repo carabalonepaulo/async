@@ -37,15 +37,18 @@ Router :: struct($S: typeid) {
 	state:    ^S,
 	handlers: [dynamic]Handler,
 	routes:   [dynamic]Route,
+	index:    Index,
 }
 
 init :: proc(self: ^Router($S), state: ^S) {
 	self.state = state
 	self.handlers = make([dynamic]Handler)
 	self.routes = make([dynamic]Route)
+	index_init(&self.index)
 }
 
 deinit :: proc(self: ^Router($S)) {
+	index_deinit(&self.index)
 	builtin.delete(self.handlers)
 	for route in self.routes do builtin.delete(route.frags)
 	builtin.delete(self.routes)
@@ -92,6 +95,7 @@ route_static :: proc(
 		},
 	}
 
+	index_add(&self.index, len(self.routes), pattern)
 	append(&self.routes, r)
 }
 
@@ -130,6 +134,7 @@ route_dyn :: proc(
 		},
 	}
 
+	index_add(&self.index, len(self.routes), pattern)
 	append(&self.routes, r)
 }
 
@@ -146,16 +151,14 @@ find_route :: proc(
 	req: ^server.Request,
 	ranges: ^[dynamic]Param_Range,
 ) -> ^Route {
-	for &r in self.routes {
-		if r.method != req.method do continue
-		if match_pattern(req.uri, r.frags, ranges) do return &r
-	}
+	it: Index_Iterator
+	index_iter_init(&it, req.uri)
 
-	if req.method != .Head do return nil
+	for route_idx in index_iter(&self.index, &it) {
+		route := &self.routes[route_idx]
 
-	for &r in self.routes {
-		if r.method != .Get do continue
-		if match_pattern(req.uri, r.frags, ranges) do return &r
+		if !(route.method == req.method || route.method == .Get && req.method == .Head) do continue
+		if match_pattern(req.uri, route.frags, ranges) do return route
 	}
 
 	return nil
