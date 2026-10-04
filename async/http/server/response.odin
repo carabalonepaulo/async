@@ -116,8 +116,8 @@ send_file :: proc(req: ^Request, res: ^Response, file_path: string) -> (ok: bool
 	send_headers(res) or_return
 
 	if internal.method != .Head {
-		cb :: proc(op: ^nbio.Operation) {nbio.close(op.sendfile.file)}
-		nbio.sendfile(internal.sock, file, cb, offset, length)
+		err := io.send_file(internal.sock, file, offset, length, internal.cancel)
+		return err != nil
 	}
 
 	return true
