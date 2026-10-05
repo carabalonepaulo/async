@@ -138,7 +138,7 @@ begin_receive :: proc(state: Receive_State, cancel_tokens: ^map[async.Cancel_Tok
 			}
 
 			state.request_handler(state.shared_state, &parser.req, &res) or_break
-			headers.has_token(&parser.req.headers, "Connection", "close") or_break
+			if headers.has_token(&parser.req.headers, "Connection", "close") do break
 		}
 	}
 }

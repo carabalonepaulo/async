@@ -96,9 +96,9 @@ one_shot_recv :: proc(self: One_Shot($T)) -> (value: T, ok: bool) #optional_ok {
 
 	set_both(raw_inner, T, get_handle(), -1, false)
 	yield()
-	_ = storage.get_ptr(&get_scheduler().resources, self.id) or_return
-	set_both(raw_inner, T, nil, 0, false)
 
+	raw_inner = try_get_raw_inner(self) or_return
+	set_both(raw_inner, T, nil, 0, false)
 	value, ok = get_value(raw_inner, T)
 
 	return
