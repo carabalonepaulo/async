@@ -63,21 +63,24 @@ parser_commit_write :: proc(self: ^Parser, n: int) {
 }
 
 Parse_Result :: enum {
+	None,
+	//
 	Partial,
 	Done,
 	//
+	Invalid_Line,
 	Invalid_Method,
 	Invalid_HTTP_Version,
 	Invalid_Request_Line,
 	Invalid_Content_Length,
 }
 
+
 parser_parse :: proc(self: ^Parser) -> Parse_Result {
 	for {
 		switch self.state {
 		case .Request_Line:
-			line, ok := parser_read_line(self)
-			if !ok do return .Partial
+			line := parser_read_line(self) or_return
 
 			parts := strings.split(line, " ", context.temp_allocator)
 			if len(parts) != 3 do return .Invalid_Request_Line
@@ -91,8 +94,7 @@ parser_parse :: proc(self: ^Parser) -> Parse_Result {
 
 			self.state = .Headers
 		case .Headers:
-			line, ok := parser_read_line(self)
-			if !ok do return .Partial
+			line := parser_read_line(self) or_return
 
 			if line == "" {
 				self.remaining_bytes = self.req.content_length
@@ -117,16 +119,17 @@ parser_parse :: proc(self: ^Parser) -> Parse_Result {
 	}
 }
 
-parser_read_line :: proc(self: ^Parser) -> (line: string, ok: bool) {
+parser_read_line :: proc(self: ^Parser) -> (line: string, err: Parse_Result) {
 	SEP :: []u8{'\r', '\n'}
 
 	idx := cb.index_of_bytes(&self.buf, SEP)
-	if idx == -1 do return "", false
+	if idx == -1 do return "", .Partial
+	if idx + len(SEP) > len(self.line_buf) do return "", .Invalid_Line
 
 	dst := self.line_buf[:idx + len(SEP)]
-	cb.read(&self.buf, dst) or_return
+	if !cb.read(&self.buf, dst) do return "", .Partial
 
-	return transmute(string)(dst[:idx]), true
+	return transmute(string)(dst[:idx]), .None
 }
 
 @(private)
@@ -164,7 +167,7 @@ test_read_line :: proc(t: ^testing.T) {
 	cb.write(&p.buf, transmute([]u8)(text))
 	line, ok := parser_read_line(&p)
 
-	testing.expect(t, ok)
+	testing.expect(t, ok == .None)
 	testing.expect(t, "GET / HTTP/1.1" == line)
 }
 

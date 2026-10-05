@@ -124,7 +124,7 @@ begin_receive :: proc(state: Receive_State, cancel_tokens: ^map[async.Cancel_Tok
 			fail(&res, .Not_Implemented) or_break
 		case .Invalid_HTTP_Version:
 			fail(&res, .HTTP_Version_Not_Supported) or_break
-		case .Invalid_Request_Line, .Invalid_Content_Length:
+		case .Invalid_Line, .Invalid_Request_Line, .Invalid_Content_Length:
 			fail(&res, .Bad_Request) or_break
 		}
 
