@@ -176,18 +176,19 @@ _dispatch :: proc(self: ^Router($S), req: ^server.Request, res: ^server.Response
 	defer builtin.delete(handlers)
 	append_elems(&handlers, ..self.handlers[:])
 
-	ds := Dispatch_State(S) {
-		router   = self,
-		handlers = handlers,
-		idx      = 0,
-		ranges   = ranges,
-	}
-
-	ds.target_route = find_route(self, req, &ranges)
-	if ds.target_route != nil {
-		append_elems(&handlers, ..ds.target_route.handlers)
+	target_route := find_route(self, req, &ranges)
+	if target_route != nil {
+		append_elems(&handlers, ..target_route.handlers)
 		append(&handlers, endpoint_handler(S))
 	} else do append(&handlers, not_found(S))
+
+	ds := Dispatch_State(S) {
+		router       = self,
+		target_route = target_route,
+		handlers     = handlers,
+		idx          = 0,
+		ranges       = ranges,
+	}
 
 	ctx := Context(S) {
 		state     = self.state,
