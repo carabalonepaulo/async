@@ -79,8 +79,9 @@ iterate :: proc(self: ^Iter, filter: string = "") -> (header: ^Header, idx: int,
 find_token :: proc(self: ^Headers, key: string, token: string) -> int {
 	it := iter(self)
 	for header, idx in iterate(&it, key) {
-		for value in strings.split_iterator(&header.value, ",") {
-			if strings.equal_fold(value, token) {
+		val_it := header.value
+		for value in strings.split_iterator(&val_it, ",") {
+			if strings.equal_fold(strings.trim_space(value), token) {
 				return idx
 			}
 		}
