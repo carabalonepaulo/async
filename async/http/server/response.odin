@@ -117,7 +117,7 @@ send_file :: proc(req: ^Request, res: ^Response, file_path: string) -> (ok: bool
 
 	if internal.method != .Head {
 		err := io.send_file(internal.sock, file, offset, length, internal.cancel)
-		return err != nil
+		return err == nil
 	}
 
 	return true
