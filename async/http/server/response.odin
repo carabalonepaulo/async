@@ -138,7 +138,7 @@ send_json :: proc(res: ^Response, value: $T) -> (ok: bool) {
 begin_chunked :: proc(res: ^Response, status: Status = .Ok) -> (ok: bool) {
 	res.status = status
 	headers.add(&res.headers, "Transfer-Encoding", "chunked")
-	headers.delete(&res.headers, "Content-Length")
+	headers.remove(&res.headers, "Content-Length")
 	return send_headers(res)
 }
 

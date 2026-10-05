@@ -51,11 +51,7 @@ parser_destroy_request :: proc(req: ^Request) {
 	delete(req.uri)
 	delete(req.version)
 
-	for header in req.headers {
-		delete(header.key)
-		delete(header.value)
-	}
-	delete(req.headers)
+	headers.destroy(&req.headers)
 }
 
 parser_peek_write :: proc(self: ^Parser) -> []u8 {
@@ -105,9 +101,8 @@ parser_parse :: proc(self: ^Parser) -> Parse_Result {
 			}
 
 			if idx := strings.index(line, ":"); idx != -1 {
-				key := strings.clone(strings.trim_space(line[:idx]))
-				val := strings.clone(strings.trim_space(line[idx + 1:]))
-
+				key := strings.trim_space(line[:idx])
+				val := strings.trim_space(line[idx + 1:])
 				headers.add(&self.req.headers, key, val)
 
 				if strings.equal_fold(key, "Content-Length") {
