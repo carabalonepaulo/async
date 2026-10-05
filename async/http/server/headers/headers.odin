@@ -54,6 +54,44 @@ add :: proc(self: ^Headers, key: string, value: string, mode := Add_Mode.Append)
 	}
 }
 
+Iter :: struct {
+	headers: ^Headers,
+	idx:     int,
+}
+
+iter :: proc(self: ^Headers) -> Iter {
+	return Iter{headers = self, idx = 0}
+}
+
+iterate :: proc(self: ^Iter, filter: string = "") -> (header: ^Header, idx: int, ok: bool) {
+	for self.idx < len(self.headers) {
+		current := &self.headers[self.idx]
+		idx := self.idx
+		self.idx += 1
+
+		if len(filter) == 0 || strings.equal_fold(current.key, filter) {
+			return current, idx, true
+		}
+	}
+	return nil, -1, false
+}
+
+find_token :: proc(self: ^Headers, key: string, token: string) -> int {
+	it := iter(self)
+	for header, idx in iterate(&it, key) {
+		for value in strings.split_iterator(&header.value, ",") {
+			if strings.equal_fold(value, token) {
+				return idx
+			}
+		}
+	}
+	return -1
+}
+
+has_token :: #force_inline proc(self: ^Headers, key: string, token: string) -> bool {
+	return find_token(self, key, token) != -1
+}
+
 @(private)
 find :: proc(self: ^Headers, key: string) -> int {
 	for i in 0 ..< len(self) {

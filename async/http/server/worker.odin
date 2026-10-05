@@ -1,8 +1,10 @@
 package async_http_server
 
+import "core:fmt"
 import "core:mem"
 import "core:nbio"
 import "core:net"
+import "core:strings"
 import "core:sync/chan"
 
 import "../.."
@@ -136,6 +138,7 @@ begin_receive :: proc(state: Receive_State, cancel_tokens: ^map[async.Cancel_Tok
 			}
 
 			if ok := state.request_handler(state.shared_state, &parser.req, &res); !ok do break
+			headers.has_token(&parser.req.headers, "Connection", "close") or_break
 		}
 	}
 }
