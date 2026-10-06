@@ -6,50 +6,51 @@ import "core:testing"
 
 import server ".."
 
-Route :: struct($S: typeid) {
+Route :: struct($S: typeid, $L: typeid) {
 	method:     server.Method,
 	frags:      []Fragment,
 	handler:    rawptr,
-	handlers:   []proc(ctx: ^Context(S)) -> bool,
+	handlers:   []proc(ctx: ^Context(S, L)) -> bool,
 	trampoline: proc(
 		handler_ptr: rawptr,
-		ctx: ^Context(S),
+		ctx: ^Context(S, L),
 		path: string,
 		frags: []Fragment,
 		match_ctx: []Param_Range,
 	) -> bool,
 }
 
-Dispatch_State :: struct($S: typeid) {
-	router:       ^Router(S),
-	handlers:     [dynamic]proc(ctx: ^Context(S)) -> bool,
+Dispatch_State :: struct($S: typeid, $L: typeid) {
+	router:       ^Router(S, L),
+	handlers:     [dynamic]proc(ctx: ^Context(S, L)) -> bool,
 	idx:          int,
-	target_route: ^Route(S),
+	target_route: ^Route(S, L),
 	ranges:       [dynamic]Param_Range,
 }
 
-Context :: struct($S: typeid) {
+Context :: struct($S: typeid, $L: typeid) {
 	state:     ^S,
+	local:     ^L,
 	req:       ^server.Request,
 	res:       ^server.Response,
 	_internal: rawptr,
 }
 
-Router :: struct($S: typeid) {
+Router :: struct($S: typeid, $L: typeid) {
 	state:    ^S,
-	handlers: [dynamic]proc(ctx: ^Context(S)) -> bool,
-	routes:   [dynamic]Route(S),
+	handlers: [dynamic]proc(ctx: ^Context(S, L)) -> bool,
+	routes:   [dynamic]Route(S, L),
 	index:    Index,
 }
 
-init :: proc(self: ^Router($S), state: ^S) {
+init :: proc(self: ^Router($S, $L), state: ^S) {
 	self.state = state
-	self.handlers = make([dynamic]proc(ctx: ^Context(S)) -> bool)
-	self.routes = make([dynamic]Route(S))
+	self.handlers = make([dynamic]proc(ctx: ^Context(S, L)) -> bool)
+	self.routes = make([dynamic]Route(S, L))
 	index_init(&self.index)
 }
 
-deinit :: proc(self: ^Router($S)) {
+deinit :: proc(self: ^Router($S, $L)) {
 	index_deinit(&self.index)
 	builtin.delete(self.handlers)
 	for route in self.routes {
@@ -59,7 +60,7 @@ deinit :: proc(self: ^Router($S)) {
 	builtin.delete(self.routes)
 }
 
-use :: proc(router: ^Router($S), handler: proc(ctx: ^Context(S)) -> bool) {
+use :: proc(router: ^Router($S, $L), handler: proc(ctx: ^Context(S, L)) -> bool) {
 	append(&router.handlers, handler)
 }
 
@@ -69,32 +70,32 @@ route :: proc {
 }
 
 route_static :: proc(
-	self: ^Router($S),
+	self: ^Router($S, $L),
 	method: server.Method,
 	pattern: string,
-	handler: proc(ctx: ^Context(S)) -> bool,
-	mws: ..proc(ctx: ^Context(S)) -> bool,
+	handler: proc(ctx: ^Context(S, L)) -> bool,
+	mws: ..proc(ctx: ^Context(S, L)) -> bool,
 ) {
 	Empty :: struct {}
 	frags, err := parse_pattern(pattern, Empty)
 	if err != .None do fmt.panicf("failed to parse static route '%s': %v", pattern, err)
 
-	handlers := make([]proc(ctx: ^Context(S)) -> bool, len(mws))
+	handlers := make([]proc(ctx: ^Context(S, L)) -> bool, len(mws))
 	copy_slice(handlers, mws)
 
-	r := Route(S) {
+	r := Route(S, L) {
 		method = method,
 		frags = frags,
 		handler = auto_cast handler,
 		handlers = handlers,
 		trampoline = proc(
 			handler: rawptr,
-			ctx: ^Context(S),
+			ctx: ^Context(S, L),
 			_: string,
 			_: []Fragment,
 			_: []Param_Range,
 		) -> bool {
-			typed_handler := (proc(ctx: ^Context(S)) -> bool)(handler)
+			typed_handler := (proc(ctx: ^Context(S, L)) -> bool)(handler)
 			return typed_handler(ctx)
 		},
 	}
@@ -104,35 +105,35 @@ route_static :: proc(
 }
 
 route_dyn :: proc(
-	self: ^Router($S),
+	self: ^Router($S, $L),
 	method: server.Method,
 	pattern: string,
 	$T: typeid,
-	handler: proc(ctx: ^Context(S), params: ^T) -> bool,
-	mws: ..proc(ctx: ^Context(S)) -> bool,
+	handler: proc(ctx: ^Context(S, L), params: ^T) -> bool,
+	mws: ..proc(ctx: ^Context(S, L)) -> bool,
 ) {
 	frags, err := parse_pattern(pattern, T)
 	if err != .None do fmt.panicf("failed to parse route '%s': %v", pattern, err)
 
-	handlers := make([]proc(ctx: ^Context(S)) -> bool, len(mws))
+	handlers := make([]proc(ctx: ^Context(S, L)) -> bool, len(mws))
 	copy_slice(handlers, mws)
 
-	r := Route(S) {
+	r := Route(S, L) {
 		method = method,
 		frags = frags,
 		handler = auto_cast handler,
 		handlers = handlers,
 		trampoline = proc(
 			handler: rawptr,
-			ctx: ^Context(S),
+			ctx: ^Context(S, L),
 			path: string,
 			frags: []Fragment,
 			ranges: []Param_Range,
 		) -> bool {
 			params: T
-			if !deserialize_params(path, frags, ranges, &params) do return invalid_params(S)(ctx)
+			if !deserialize_params(path, frags, ranges, &params) do return invalid_params(S, L)(ctx)
 
-			typed_handler := (proc(ctx: ^Context(S), params: ^T) -> bool)(handler)
+			typed_handler := (proc(ctx: ^Context(S, L), params: ^T) -> bool)(handler)
 			return typed_handler(ctx, &params)
 		},
 	}
@@ -141,19 +142,19 @@ route_dyn :: proc(
 	append(&self.routes, r)
 }
 
-dispatch :: proc(self: ^Router($S)) -> server.Request_Handler {
+dispatch :: proc(self: ^Router($S, $L)) -> server.Request_Handler {
 	return proc(ud: rawptr, req: ^server.Request, res: ^server.Response) -> bool {
-			self := (^Router(S))(ud)
+			self := (^Router(S, L))(ud)
 			return _dispatch(self, req, res)
 		}
 }
 
 @(private = "file")
 find_route :: proc(
-	self: ^Router($S),
+	self: ^Router($S, $L),
 	req: ^server.Request,
 	ranges: ^[dynamic]Param_Range,
-) -> ^Route(S) {
+) -> ^Route(S, L) {
 	it: Index_Iterator
 	index_iter_init(&it, req.uri)
 
@@ -168,21 +169,21 @@ find_route :: proc(
 }
 
 @(private = "file")
-_dispatch :: proc(self: ^Router($S), req: ^server.Request, res: ^server.Response) -> bool {
+_dispatch :: proc(self: ^Router($S, $L), req: ^server.Request, res: ^server.Response) -> bool {
 	ranges := make([dynamic]Param_Range, 0, 4)
 	defer builtin.delete(ranges)
 
-	handlers := make([dynamic]proc(ctx: ^Context(S)) -> bool, 0, len(self.handlers))
+	handlers := make([dynamic]proc(ctx: ^Context(S, L)) -> bool, 0, len(self.handlers))
 	defer builtin.delete(handlers)
 	append_elems(&handlers, ..self.handlers[:])
 
 	target_route := find_route(self, req, &ranges)
 	if target_route != nil {
 		append_elems(&handlers, ..target_route.handlers)
-		append(&handlers, endpoint_handler(S))
-	} else do append(&handlers, not_found(S))
+		append(&handlers, endpoint_handler(S, L))
+	} else do append(&handlers, not_found(S, L))
 
-	ds := Dispatch_State(S) {
+	ds := Dispatch_State(S, L) {
 		router       = self,
 		target_route = target_route,
 		handlers     = handlers,
@@ -190,8 +191,11 @@ _dispatch :: proc(self: ^Router($S), req: ^server.Request, res: ^server.Response
 		ranges       = ranges,
 	}
 
-	ctx := Context(S) {
+	local: L = {}
+
+	ctx := Context(S, L) {
 		state     = self.state,
+		local     = &local,
 		req       = req,
 		res       = res,
 		_internal = &ds,
@@ -200,8 +204,8 @@ _dispatch :: proc(self: ^Router($S), req: ^server.Request, res: ^server.Response
 	return next(&ctx)
 }
 
-next :: proc(ctx: ^Context($S)) -> bool {
-	ds := (^Dispatch_State(S))(ctx._internal)
+next :: proc(ctx: ^Context($S, $L)) -> bool {
+	ds := (^Dispatch_State(S, L))(ctx._internal)
 	if ds.idx < len(ds.handlers) {
 		handler := ds.handlers[ds.idx]
 		ds.idx += 1
@@ -211,10 +215,10 @@ next :: proc(ctx: ^Context($S)) -> bool {
 }
 
 @(private = "file")
-endpoint_handler :: proc($S: typeid) -> proc(ctx: ^Context(S)) -> bool {
-	return proc(ctx: ^Context(S)) -> bool {
-			ds := (^Dispatch_State(S))(ctx._internal)
-			if ds.target_route == nil do return not_found(S)(ctx)
+endpoint_handler :: proc($S: typeid, $L: typeid) -> proc(ctx: ^Context(S, L)) -> bool {
+	return proc(ctx: ^Context(S, L)) -> bool {
+			ds := (^Dispatch_State(S, L))(ctx._internal)
+			if ds.target_route == nil do return not_found(S, L)(ctx)
 
 			r := ds.target_route
 			return r.trampoline(r.handler, ctx, ctx.req.uri, r.frags, ds.ranges[:])
@@ -222,15 +226,15 @@ endpoint_handler :: proc($S: typeid) -> proc(ctx: ^Context(S)) -> bool {
 }
 
 @(private = "file")
-not_found :: proc($S: typeid) -> proc(ctx: ^Context(S)) -> bool {
-	return proc(ctx: ^Context(S)) -> bool {
+not_found :: proc($S: typeid, $L: typeid) -> proc(ctx: ^Context(S, L)) -> bool {
+	return proc(ctx: ^Context(S, L)) -> bool {
 			return server.send_text(ctx.res, .Not_Found, "404 Not Found")
 		}
 }
 
 @(private = "file")
-invalid_params :: proc($S: typeid) -> proc(ctx: ^Context(S)) -> bool {
-	return proc(ctx: ^Context(S)) -> bool {
+invalid_params :: proc($S: typeid, $L: typeid) -> proc(ctx: ^Context(S, L)) -> bool {
+	return proc(ctx: ^Context(S, L)) -> bool {
 			return server.send_text(ctx.res, .Internal_Server_Error, "Invalid Params")
 		}
 }
@@ -241,9 +245,13 @@ test_defining_route :: proc(t: ^testing.T) {
 		t: ^testing.T,
 	}
 
+	Local :: struct {
+		name: string,
+	}
+
 	state := State{t}
 
-	r: Router(State)
+	r: Router(State, Local)
 	init(&r, &state)
 	defer deinit(&r)
 
@@ -251,14 +259,18 @@ test_defining_route :: proc(t: ^testing.T) {
 		name: string,
 	}
 
-	HELLO :: proc(ctx: ^Context(State), params: ^Hello_Params) -> bool {
+	mw :: proc(ctx: ^Context(State, Local)) -> bool {
+		ctx.local.name = "soreto"
+		return next(ctx)
+	}
+
+	HELLO :: proc(ctx: ^Context(State, Local), params: ^Hello_Params) -> bool {
 		return false
 	}
 	route_dyn(&r, .Get, "/hello/{name}", Hello_Params, HELLO)
 
-	HOME :: proc(ctx: ^Context(State)) -> bool {
+	HOME :: proc(ctx: ^Context(State, Local)) -> bool {
 		return false
 	}
 	route_static(&r, .Get, "/", HOME)
 }
-
