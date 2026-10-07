@@ -28,33 +28,14 @@ Open_Flag :: hl.Open_Flag
 Transaction_Mode :: hl.Transaction_Mode
 
 Consumer :: struct {
-	worker: ^thread.Thread,
 	in_ch:  chan.Chan(Request),
 	out_ch: chan.Chan(Response),
 }
 
-init :: proc(self: ^Consumer, max_tasks: int) -> (err: runtime.Allocator_Error) {
-	input := chan.create_buffered(chan.Chan(Request), max_tasks, context.allocator) or_return
-	defer if err != nil do chan.destroy(&input)
-
-	output := chan.create_buffered(chan.Chan(Response), max_tasks, context.allocator) or_return
-	defer if err != nil do chan.destroy(&output)
-
-	self.in_ch = input
-	self.out_ch = output
-	self.worker = thread.create_and_start_with_poly_data(input, worker_run)
-
-	return nil
-}
-
-deinit :: proc(self: ^Consumer) {
-	chan.close(self.in_ch)
-	thread.destroy(self.worker)
-
+destroy :: proc(self: ^Consumer) {
 	drain(self)
 
 	chan.close(self.out_ch)
-	chan.destroy(self.in_ch)
 	chan.destroy(self.out_ch)
 }
 

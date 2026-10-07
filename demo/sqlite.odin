@@ -34,9 +34,12 @@ sqlite_task :: proc(a: ^aslet.Consumer) {
 }
 
 sqlite_demo :: proc() {
-	a: aslet.Consumer
-	assert(aslet.init(&a, 1024) == nil, "failed to init aslet")
-	defer aslet.deinit(&a)
+	w: aslet.Worker
+	aslet.init(&w)
+	defer aslet.deinit(&w)
+
+	a, _ := aslet.create_consumer(&w)
+	defer aslet.destroy(&a)
 
 	async.spawn(&a, sqlite_task)
 

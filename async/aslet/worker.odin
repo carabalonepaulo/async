@@ -1,7 +1,44 @@
 package async_aslet
 
+import "core:mem"
 import "core:sync/chan"
+import "core:thread"
 import "hl"
+
+DEFAULT_CAPACITY :: 1024
+
+Worker :: struct {
+	th:    ^thread.Thread,
+	in_ch: chan.Chan(Request),
+}
+
+init :: proc(self: ^Worker, cap: int = DEFAULT_CAPACITY) -> (err: mem.Allocator_Error) {
+	input := chan.create_buffered(chan.Chan(Request), cap, context.allocator) or_return
+	defer if err != nil do chan.destroy(&input)
+
+	self.in_ch = input
+	self.th = thread.create_and_start_with_poly_data(input, worker_run)
+
+	return .None
+}
+
+deinit :: proc(self: ^Worker) {
+	chan.close(self.in_ch)
+	thread.destroy(self.th)
+	chan.destroy(self.in_ch)
+}
+
+create_consumer :: proc(
+	self: ^Worker,
+	cap: int = DEFAULT_CAPACITY,
+) -> (
+	consumer: Consumer,
+	err: mem.Allocator_Error,
+) {
+	out_ch := chan.create_buffered(chan.Chan(Response), cap, context.allocator) or_return
+	defer if err != nil do chan.destroy(&out_ch)
+	return Consumer{self.in_ch, out_ch}, .None
+}
 
 @(private)
 worker_run :: proc(input_ch: chan.Chan(Request)) {
