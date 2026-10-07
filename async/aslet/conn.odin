@@ -4,7 +4,7 @@ import ".."
 import "hl"
 
 Conn :: struct {
-	aslet:     ^Aslet,
+	aslet:     ^Consumer,
 	conn:      rawptr,
 	path:      string,
 	open_flag: Open_Flag,
@@ -20,7 +20,14 @@ batch_insert :: proc(self: ^Conn, sql: string, params: [][]Param) -> Result {
 	ud := transmute(rawptr)(os)
 	ok := send(
 		self.aslet,
-		Batch_Insert_Request{conn = self.conn, sql = sql, params = params, ud = ud, cb = cb},
+		Batch_Insert_Request {
+			out_ch = self.aslet.out_ch,
+			conn = self.conn,
+			sql = sql,
+			params = params,
+			ud = ud,
+			cb = cb,
+		},
 	)
 	if !ok do return .Error
 
@@ -38,7 +45,14 @@ conn_exec :: proc(self: ^Conn, sql: string, params: []Param) -> Result {
 	ud := transmute(rawptr)(os)
 	ok := send(
 		self.aslet,
-		Exec_Request{conn = self.conn, sql = sql, params = params, ud = ud, cb = cb},
+		Exec_Request {
+			out_ch = self.aslet.out_ch,
+			conn = self.conn,
+			sql = sql,
+			params = params,
+			ud = ud,
+			cb = cb,
+		},
 	)
 	if !ok do return .Error
 
@@ -74,6 +88,7 @@ conn_fetch :: proc(
 	ok := send(
 		self.aslet,
 		Fetch_Request {
+			out_ch = self.aslet.out_ch,
 			conn = self.conn,
 			sql = sql,
 			params = params,
@@ -97,7 +112,10 @@ close :: proc(self: ^Conn) -> Result {
 
 	delete(self.path)
 	ud := transmute(rawptr)(async.get_handle())
-	ok := send(self.aslet, Close_Request{conn = self.conn, ud = ud, cb = cb})
+	ok := send(
+		self.aslet,
+		Close_Request{out_ch = self.aslet.out_ch, conn = self.conn, ud = ud, cb = cb},
+	)
 	if !ok do return .Error
 
 	async.yield()
@@ -129,6 +147,7 @@ transaction :: proc(
 	ok := send(
 		self.aslet,
 		Transaction_Request {
+			out_ch = self.aslet.out_ch,
 			path = self.path,
 			open_flag = self.open_flag,
 			mode = mode,
@@ -154,7 +173,10 @@ rollback :: proc(self: ^Transaction) -> (ok: bool) {
 
 	os := async.create_one_shot(bool)
 	ud := transmute(rawptr)(os)
-	send(self.conn.aslet, Rollback_Request{conn = self.conn.conn, ud = ud, cb = cb}) or_return
+	send(
+		self.conn.aslet,
+		Rollback_Request{out_ch = self.conn.aslet.out_ch, conn = self.conn.conn, ud = ud, cb = cb},
+	) or_return
 
 	return async.recv(os)
 }
@@ -170,7 +192,10 @@ commit :: proc(self: ^Transaction) -> (ok: bool) {
 
 	os := async.create_one_shot(bool)
 	ud := transmute(rawptr)(os)
-	send(self.conn.aslet, Commit_Request{conn = self.conn.conn, ud = ud, cb = cb}) or_return
+	send(
+		self.conn.aslet,
+		Commit_Request{out_ch = self.conn.aslet.out_ch, conn = self.conn.conn, ud = ud, cb = cb},
+	) or_return
 
 	return async.recv(os)
 }
@@ -200,4 +225,3 @@ fetch :: proc {
 	conn_fetch,
 	transaction_fetch,
 }
-

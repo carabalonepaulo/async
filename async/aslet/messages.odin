@@ -1,10 +1,12 @@
 package async_aslet
 
+import "core:sync/chan"
 import "hl"
 
 Open_Callback :: proc(conn: Conn, ok: bool, ud: rawptr)
 
 Open_Request :: struct {
+	out_ch:    chan.Chan(Response),
 	path:      string,
 	open_flag: Open_Flag,
 	ud:        rawptr,
@@ -14,14 +16,16 @@ Open_Request :: struct {
 Close_Callback :: proc(ud: rawptr)
 
 Close_Request :: struct {
-	conn: rawptr,
-	ud:   rawptr,
-	cb:   Close_Callback,
+	out_ch: chan.Chan(Response),
+	conn:   rawptr,
+	ud:     rawptr,
+	cb:     Close_Callback,
 }
 
 Batch_Insert_Callback :: proc(rc: Result, ud: rawptr)
 
 Batch_Insert_Request :: struct {
+	out_ch: chan.Chan(Response),
 	conn:   rawptr,
 	sql:    string,
 	params: [][]Param,
@@ -32,6 +36,7 @@ Batch_Insert_Request :: struct {
 Exec_Callback :: proc(rc: Result, ud: rawptr)
 
 Exec_Request :: struct {
+	out_ch: chan.Chan(Response),
 	conn:   rawptr,
 	sql:    string,
 	params: []Param,
@@ -42,6 +47,7 @@ Exec_Request :: struct {
 Fetch_Callback :: proc(rc: Result, ud: rawptr)
 
 Fetch_Request :: struct {
+	out_ch: chan.Chan(Response),
 	conn:   rawptr,
 	sql:    string,
 	params: []Param,
@@ -55,6 +61,7 @@ Fetch_Request :: struct {
 Transaction_Callback :: proc(transaction: Transaction, ok: bool, ud: rawptr)
 
 Transaction_Request :: struct {
+	out_ch:    chan.Chan(Response),
 	path:      string,
 	open_flag: Open_Flag,
 	mode:      Transaction_Mode,
@@ -65,17 +72,19 @@ Transaction_Request :: struct {
 Rollback_Callback :: proc(ok: bool, ud: rawptr)
 
 Rollback_Request :: struct {
-	conn: rawptr,
-	ud:   rawptr,
-	cb:   Rollback_Callback,
+	out_ch: chan.Chan(Response),
+	conn:   rawptr,
+	ud:     rawptr,
+	cb:     Rollback_Callback,
 }
 
 Commit_Callback :: proc(ok: bool, ud: rawptr)
 
 Commit_Request :: struct {
-	conn: rawptr,
-	ud:   rawptr,
-	cb:   Commit_Callback,
+	out_ch: chan.Chan(Response),
+	conn:   rawptr,
+	ud:     rawptr,
+	cb:     Commit_Callback,
 }
 
 Request :: union {
@@ -150,4 +159,3 @@ Response :: union {
 	Rollback_Response,
 	Commit_Response,
 }
-

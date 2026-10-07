@@ -14,7 +14,7 @@ INSERT :: `insert into person (name, age) values (?1, ?2);`
 
 SELECT :: `select * from person;`
 
-sqlite_task :: proc(a: ^aslet.Aslet) {
+sqlite_task :: proc(a: ^aslet.Consumer) {
 	conn, conn_ok := aslet.open(a, "test.db")
 	assert(conn_ok)
 	defer aslet.close(&conn)
@@ -34,7 +34,7 @@ sqlite_task :: proc(a: ^aslet.Aslet) {
 }
 
 sqlite_demo :: proc() {
-	a: aslet.Aslet
+	a: aslet.Consumer
 	assert(aslet.init(&a, 1024) == nil, "failed to init aslet")
 	defer aslet.deinit(&a)
 
@@ -45,4 +45,3 @@ sqlite_demo :: proc() {
 		aslet.poll(&a)
 	}
 }
-

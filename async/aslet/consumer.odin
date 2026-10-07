@@ -27,39 +27,39 @@ Open_Flag :: hl.Open_Flag
 
 Transaction_Mode :: hl.Transaction_Mode
 
-Aslet :: struct {
-	worker:          ^thread.Thread,
-	input_sender:    chan.Chan(Request),
-	output_receiver: chan.Chan(Response),
+Consumer :: struct {
+	worker: ^thread.Thread,
+	in_ch:  chan.Chan(Request),
+	out_ch: chan.Chan(Response),
 }
 
-init :: proc(self: ^Aslet, max_tasks: int) -> (err: runtime.Allocator_Error) {
+init :: proc(self: ^Consumer, max_tasks: int) -> (err: runtime.Allocator_Error) {
 	input := chan.create_buffered(chan.Chan(Request), max_tasks, context.allocator) or_return
 	defer if err != nil do chan.destroy(&input)
 
 	output := chan.create_buffered(chan.Chan(Response), max_tasks, context.allocator) or_return
 	defer if err != nil do chan.destroy(&output)
 
-	self.input_sender = input
-	self.output_receiver = output
-	self.worker = thread.create_and_start_with_poly_data2(input, output, worker_run)
+	self.in_ch = input
+	self.out_ch = output
+	self.worker = thread.create_and_start_with_poly_data(input, worker_run)
 
 	return nil
 }
 
-deinit :: proc(self: ^Aslet) {
-	chan.close(self.input_sender)
+deinit :: proc(self: ^Consumer) {
+	chan.close(self.in_ch)
 	thread.destroy(self.worker)
 
 	drain(self)
 
-	chan.close(self.output_receiver)
-	chan.destroy(self.input_sender)
-	chan.destroy(self.output_receiver)
+	chan.close(self.out_ch)
+	chan.destroy(self.in_ch)
+	chan.destroy(self.out_ch)
 }
 
 open :: proc(
-	self: ^Aslet,
+	self: ^Consumer,
 	path: string,
 	open_flag: Open_Flag = .Create | .Read_Write | .No_Mutex,
 ) -> (
@@ -75,7 +75,10 @@ open :: proc(
 	os := async.create_one_shot(Pair(Conn, bool))
 	ud := transmute(rawptr)(os)
 
-	ok = send(self, Open_Request{path = path, open_flag = open_flag, ud = ud, cb = cb})
+	ok = send(
+		self,
+		Open_Request{out_ch = self.out_ch, path = path, open_flag = open_flag, ud = ud, cb = cb},
+	)
 	if !ok {
 		delete(path)
 		return {}, false
@@ -85,24 +88,24 @@ open :: proc(
 	return res.a, res.b
 }
 
-poll :: proc(self: ^Aslet, timeout: time.Duration = NO_TIMEOUT) {
+poll :: proc(self: ^Consumer, timeout: time.Duration = NO_TIMEOUT) {
 	start := time.now()
 	for {
-		msg := chan.try_recv(self.output_receiver) or_break
+		msg := chan.try_recv(self.out_ch) or_break
 		dispatch(self, &msg)
 		if time.since(start) >= timeout do break
 	}
 }
 
-drain :: proc(self: ^Aslet) {
+drain :: proc(self: ^Consumer) {
 	for {
-		resp := chan.try_recv(self.output_receiver) or_break
+		resp := chan.try_recv(self.out_ch) or_break
 		dispatch(self, &resp)
 	}
 }
 
 @(private)
-dispatch :: proc(self: ^Aslet, resp: ^Response) {
+dispatch :: proc(self: ^Consumer, resp: ^Response) {
 	switch &m in resp {
 	case Open_Response:
 		if m.ok do m.cb(Conn{self, m.conn, m.path, m.open_flag}, m.ok, m.ud)
@@ -134,7 +137,6 @@ dispatch :: proc(self: ^Aslet, resp: ^Response) {
 }
 
 @(private)
-send :: #force_inline proc(self: ^Aslet, req: Request) -> bool {
-	return chan.send(self.input_sender, req)
+send :: #force_inline proc(self: ^Consumer, req: Request) -> bool {
+	return chan.send(self.in_ch, req)
 }
-
