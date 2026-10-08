@@ -42,20 +42,12 @@ create_consumer :: proc(
 	out_ch := chan.create_buffered(chan.Chan(Response), cap, context.allocator) or_return
 	defer if err != nil do chan.destroy(&out_ch)
 
-	sched := async.get_scheduler()
-	entry := storage.entry(&sched.resources)
-	id := storage.get_id(&entry)
-
 	consumer = new(Consumer, runtime.default_allocator()) or_return
-	consumer^ = Consumer{id, self.in_ch, out_ch}
+	ref := async.add_ref(consumer)
+	consumer^ = Consumer{ref.id, self.in_ch, out_ch}
 
-	res: async.Resource
-	res.ud[0] = consumer
-	storage.insert(&entry, res)
-
-	async.schedule(id, proc(id: u64) -> bool {
-		res := async.try_get_resource(id) or_return
-		consumer := (^Consumer)(res.ud[0])
+	async.schedule(ref, proc(ref: async.Ref(Consumer)) -> bool {
+		consumer := async.try_get_ref(ref) or_return
 		poll(consumer)
 		return true
 	})

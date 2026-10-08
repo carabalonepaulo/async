@@ -38,6 +38,11 @@ Resource :: struct {
 	drop: proc(self: ^Resource),
 }
 
+Ref :: struct($T: typeid) {
+	id:      u64,
+	_marker: [0]T,
+}
+
 @(private)
 Hook :: enum {
 	Exit,
@@ -71,6 +76,7 @@ Handle :: distinct u64
 Scheduler :: struct {
 	scheduled:         queue.Queue(Task),
 	resources:         storage.Storage(Resource),
+	refs:              storage.Storage(rawptr),
 	ready:             queue.Queue(u64),
 	active_coroutines: uint,
 	time_wheel:        tw.Time_Wheel,
@@ -82,6 +88,7 @@ scheduler: Scheduler
 
 scheduler_init :: proc() {
 	storage.init(&scheduler.resources, INITIAL_CAPACITY)
+	storage.init(&scheduler.refs, INITIAL_CAPACITY)
 	queue.init(&scheduler.scheduled)
 	queue.init(&scheduler.ready)
 
@@ -104,6 +111,7 @@ scheduler_deinit :: proc() {
 
 	queue.destroy(&scheduler.ready)
 	storage.deinit(&scheduler.resources)
+	storage.deinit(&scheduler.refs)
 
 	tw.deinit(&scheduler.time_wheel)
 	delete(scheduler.finished)
@@ -329,4 +337,28 @@ try_remove_resource :: #force_inline proc(id: u64) -> (Resource, bool) {
 has_resource :: #force_inline proc(id: u64) -> bool {
 	_, ok := storage.get_ptr(&scheduler.resources, id)
 	return ok
+}
+
+try_get_ref :: #force_inline proc(ref: Ref($T)) -> (ptr: ^T, ok: bool) {
+	ud := storage.get_ptr(&scheduler.refs, ref.id) or_return
+	return (^T)(ud), true
+}
+
+add_ref :: #force_inline proc(ptr: ^$T) -> Ref(T) {
+	id := storage.add(&scheduler.refs, rawptr(ptr))
+	return Ref(T){id = id}
+}
+
+try_remove_ref :: #force_inline proc(ref: Ref($T)) -> (ptr: ^T, ok: bool) {
+	raw_ptr := storage.remove(&scheduler.refs, ref.id) or_return
+	return (^T)(raw_ptr), true
+}
+
+has_ref :: #force_inline proc(ref: Ref($T)) -> bool {
+	_, ok := storage.get_ptr(&scheduler.refs, ref.id)
+	return ok
+}
+
+as_ref :: #force_inline proc(id: u64, $T: typeid) -> Ref(T) {
+	return Ref(T){id = id}
 }

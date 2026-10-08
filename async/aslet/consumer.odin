@@ -35,7 +35,8 @@ Consumer :: struct {
 destroy :: proc(self: ^Consumer) {
 	drain(self)
 
-	async.try_remove_resource(self.id)
+	ref := async.as_ref(self.id, Consumer)
+	async.try_remove_ref(ref)
 
 	chan.close(self.out_ch)
 	chan.destroy(self.out_ch)
