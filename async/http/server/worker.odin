@@ -1,10 +1,8 @@
 package async_http_server
 
-import "core:fmt"
 import "core:mem"
 import "core:nbio"
 import "core:net"
-import "core:strings"
 import "core:sync/chan"
 
 import "../.."
@@ -16,7 +14,6 @@ WORKER_RESOURCE_INLINE_STORAGE :: 5
 
 Worker_Hook :: struct {
 	ud:     [WORKER_RESOURCE_INLINE_STORAGE]rawptr,
-	async:  bool,
 	init:   proc(self: ^Worker_Hook),
 	deinit: proc(self: ^Worker_Hook),
 }
@@ -46,14 +43,13 @@ worker :: proc(
 	io.init()
 	defer io.deinit()
 
-	call_hook :: proc(hook: ^Worker_Hook, fn: proc(hook: ^Worker_Hook)) {
-		TASK :: proc(hook: ^Worker_Hook, fn: proc(hook: ^Worker_Hook)) {fn(hook)}
-		handle := async.spawn(hook, fn, TASK)
-		async.block(handle, io.poll)
-	}
+	init_handle := async.spawn(hooks, proc(hooks: []Worker_Hook) {for &wr in hooks do wr.init(&wr)})
+	async.block(init_handle, io.poll)
 
-	for &wr in hooks do call_hook(&wr, wr.init)
-	defer for &wr in hooks do call_hook(&wr, wr.deinit)
+	defer {
+		deinit_handle := async.spawn(hooks, proc(hooks: []Worker_Hook) {for &wr in hooks do wr.deinit(&wr)})
+		async.block(deinit_handle, io.poll)
+	}
 
 	cancel_all :: proc(cancel_tokens: ^map[async.Cancel_Token]bool) {
 		for tk in cancel_tokens do async.trigger(tk)
@@ -67,7 +63,6 @@ worker :: proc(
 		for {
 			async.poll()
 			io.poll()
-			// for &wr in hooks do if wr.poll != nil do wr.poll(&wr)
 			if should_close^ do cancel_all(&cancel_tokens)
 			for msg in chan.try_recv(msgs) do async.spawn(msg, &cancel_tokens, begin_receive)
 			if async.get_pending() == 0 do break
