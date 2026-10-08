@@ -12,6 +12,15 @@ import cb "../../circular_buffer"
 import "../../io"
 import "headers"
 
+WORKER_RESOURCE_INLINE_STORAGE :: 5
+
+Worker_Hook :: struct {
+	ud:     [WORKER_RESOURCE_INLINE_STORAGE]rawptr,
+	init:   proc(self: ^Worker_Hook),
+	deinit: proc(self: ^Worker_Hook),
+	poll:   proc(self: ^Worker_Hook),
+}
+
 Receive_State :: struct {
 	mime_types:      map[string]string,
 	sock:            net.TCP_Socket,
@@ -19,7 +28,15 @@ Receive_State :: struct {
 	request_handler: Request_Handler,
 }
 
-worker :: proc(id: int, msgs: chan.Chan(Receive_State), should_close: ^bool) {
+worker :: proc(
+	id: int,
+	msgs: chan.Chan(Receive_State),
+	hooks: []Worker_Hook,
+	should_close: ^bool,
+) {
+	worker_resources := make(map[typeid]u64)
+	defer delete(worker_resources)
+
 	cancel_tokens := make(map[async.Cancel_Token]bool)
 	defer delete(cancel_tokens)
 
@@ -28,6 +45,9 @@ worker :: proc(id: int, msgs: chan.Chan(Receive_State), should_close: ^bool) {
 
 	io.init()
 	defer io.deinit()
+
+	for &wr in hooks do if wr.init != nil do wr.init(&wr)
+	defer for &wr in hooks do if wr.deinit != nil do wr.deinit(&wr)
 
 	cancel_all :: proc(cancel_tokens: ^map[async.Cancel_Token]bool) {
 		for tk in cancel_tokens do async.trigger(tk)
@@ -41,6 +61,7 @@ worker :: proc(id: int, msgs: chan.Chan(Receive_State), should_close: ^bool) {
 		for {
 			async.poll()
 			io.poll()
+			for &wr in hooks do if wr.poll != nil do wr.poll(&wr)
 			if should_close^ do cancel_all(&cancel_tokens)
 			for msg in chan.try_recv(msgs) do async.spawn(msg, &cancel_tokens, begin_receive)
 			if async.get_pending() == 0 do break
@@ -150,4 +171,3 @@ fail :: proc(res: ^Response, status: Maybe(Status) = nil) -> bool {
 	send_headers(res)
 	return false
 }
-

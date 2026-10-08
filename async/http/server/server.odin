@@ -32,6 +32,7 @@ Server :: struct {
 	open:            bool,
 	workers:         []^thread.Thread,
 	cancel:          async.Cancel_Token,
+	worker_hooks:    []Worker_Hook,
 	should_close:    bool,
 }
 
@@ -40,6 +41,7 @@ init :: proc(
 	port: int,
 	state: rawptr,
 	request_handler: Request_Handler,
+	hooks: []Worker_Hook = nil,
 ) -> (
 	err: net.Network_Error,
 ) {
@@ -49,6 +51,7 @@ init :: proc(
 	self.open = true
 	self.request_handler = request_handler
 	self.cancel = async.create_cancel_token()
+	self.worker_hooks = hooks
 
 	self.mime_types = make(map[string]string)
 	init_mime_types(&self.mime_types)
@@ -62,9 +65,10 @@ init :: proc(
 	core_count, _, ok := info.cpu_core_count()
 	self.workers = make([]^thread.Thread, ok ? core_count : 1)
 	for i in 0 ..< len(self.workers) {
-		self.workers[i] = thread.create_and_start_with_poly_data3(
+		self.workers[i] = thread.create_and_start_with_poly_data4(
 			i,
 			self.msgs,
+			self.worker_hooks,
 			&self.should_close,
 			worker,
 		)
@@ -88,6 +92,31 @@ deinit :: proc(self: ^Server) {
 	deinit_mime_types(&self.mime_types)
 }
 
+@(private, thread_local)
+worker_resources: map[typeid]u64
+
+try_get_resource :: proc($T: typeid) -> (ptr: ^T, ok: bool) {
+	id := worker_resources[T] or_return
+	res := async.try_get_resource(id) or_return
+	return async.load_inline(&res.ud, T)
+}
+
+get_resource :: proc($T: typeid) -> ^T {
+	ptr, ok := try_get(T)
+	return ok ? ptr : nil
+}
+
+store_resource :: proc(value: $T) {
+	assert(T not_in worker_resources)
+
+	res := async.Resource{}
+	ptr := async.load_inline(&res.ud, T)
+	ptr^ = value
+
+	id := async.add_resource(res)
+	worker_resources[T] = id
+}
+
 @(private = "file")
 begin_accept :: proc(self: ^Server) {
 	for {
@@ -107,4 +136,3 @@ begin_accept :: proc(self: ^Server) {
 		}
 	}
 }
-
