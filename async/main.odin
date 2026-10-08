@@ -163,7 +163,7 @@ scheduler_block_with_poly :: proc(
 	}
 }
 
-repeat :: proc(ud: rawptr, fn: proc(ud: rawptr), cancel: Cancel_Token) {
+repeat :: proc(cancel: Cancel_Token, ud: rawptr, fn: proc(ud: rawptr)) {
 	State :: struct {
 		closure: Closure,
 		cancel:  Cancel_Token,
@@ -188,10 +188,10 @@ repeat :: proc(ud: rawptr, fn: proc(ud: rawptr), cancel: Cancel_Token) {
 		}
 
 		state.closure.fn(state.closure.ud)
-		next_tick(trampoline, ud)
+		next_tick(ud, trampoline)
 	}
 
-	next_tick(trampoline, transmute(rawptr)(id))
+	next_tick(transmute(rawptr)(id), trampoline)
 }
 
 poll :: proc() {
@@ -256,7 +256,7 @@ join_many :: proc(handles: []Handle) {
 	wait(wg)
 }
 
-next_tick :: proc(fn: proc(ud: rawptr), ud: rawptr = nil) {
+next_tick :: proc(ud: rawptr, fn: proc(ud: rawptr)) {
 	queue.enqueue(&scheduler.next_tick, Closure{ud, fn})
 }
 
