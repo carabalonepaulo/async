@@ -50,6 +50,12 @@ Closure :: struct {
 }
 
 @(private)
+Task :: struct {
+	ud: [CASE_INLINE_STORAGE]rawptr,
+	fn: proc(ud: ^[CASE_INLINE_STORAGE]rawptr) -> bool,
+}
+
+@(private)
 Internal_State :: struct {
 	ctx:    runtime.Context,
 	co:     ^coro.Coro,
@@ -63,7 +69,7 @@ Internal_State :: struct {
 Handle :: distinct u64
 
 Scheduler :: struct {
-	next_tick:         queue.Queue(Closure),
+	scheduled:         queue.Queue(Task),
 	resources:         storage.Storage(Resource),
 	ready:             queue.Queue(u64),
 	active_coroutines: uint,
@@ -76,7 +82,7 @@ scheduler: Scheduler
 
 scheduler_init :: proc() {
 	storage.init(&scheduler.resources, INITIAL_CAPACITY)
-	queue.init(&scheduler.next_tick)
+	queue.init(&scheduler.scheduled)
 	queue.init(&scheduler.ready)
 
 	tw.init(&scheduler.time_wheel, 1 * time.Millisecond)
@@ -84,11 +90,7 @@ scheduler_init :: proc() {
 }
 
 scheduler_deinit :: proc() {
-	for queue.len(scheduler.next_tick) > 0 {
-		meta := queue.dequeue(&scheduler.next_tick)
-		meta.fn(meta.ud)
-	}
-	queue.destroy(&scheduler.next_tick)
+	queue.destroy(&scheduler.scheduled)
 
 	storage.retain(&scheduler.resources, nil, proc(id: u64, res: ^Resource, ud: rawptr) -> bool {
 		if res.drop != nil {
@@ -163,42 +165,11 @@ scheduler_block_with_poly :: proc(
 	}
 }
 
-repeat :: proc(cancel: Cancel_Token, ud: rawptr, fn: proc(ud: rawptr)) {
-	State :: struct {
-		closure: Closure,
-		cancel:  Cancel_Token,
-	}
-
-	res: Resource
-	load_inline(&res.ud, State)^ = State {
-		cancel  = cancel,
-		closure = Closure{ud, fn},
-	}
-	id := add_resource(res)
-
-	trampoline :: proc(ud: rawptr) {
-		id := transmute(u64)(ud)
-		res, ok := try_get_resource(id)
-		if !ok do return
-
-		state := load_inline(&res.ud, State)
-		if is_triggered(state.cancel) {
-			try_remove_resource(id)
-			return
-		}
-
-		state.closure.fn(state.closure.ud)
-		next_tick(ud, trampoline)
-	}
-
-	next_tick(transmute(rawptr)(id), trampoline)
-}
-
 poll :: proc() {
-	len := queue.len(scheduler.next_tick)
+	len := queue.len(scheduler.scheduled)
 	for _ in 0 ..< len {
-		meta := queue.dequeue(&scheduler.next_tick)
-		meta.fn(meta.ud)
+		meta := queue.dequeue(&scheduler.scheduled)
+		if meta.fn(&meta.ud) do queue.enqueue(&scheduler.scheduled, meta)
 	}
 
 	ready_count := queue.len(scheduler.ready)
@@ -254,10 +225,6 @@ join_many :: proc(handles: []Handle) {
 		add(wg)
 	}
 	wait(wg)
-}
-
-next_tick :: proc(ud: rawptr, fn: proc(ud: rawptr)) {
-	queue.enqueue(&scheduler.next_tick, Closure{ud, fn})
 }
 
 timer :: proc(n: time.Duration, fn: proc(ud: rawptr), ud: rawptr = nil) -> u64 {
