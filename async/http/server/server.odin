@@ -98,11 +98,11 @@ worker_resources: map[typeid]u64
 try_get_resource :: proc($T: typeid) -> (ptr: ^T, ok: bool) {
 	id := worker_resources[T] or_return
 	res := async.try_get_resource(id) or_return
-	return async.load_inline(&res.ud, T)
+	return async.load_inline(&res.ud, T), true
 }
 
 get_resource :: proc($T: typeid) -> ^T {
-	ptr, ok := try_get(T)
+	ptr, ok := try_get_resource(T)
 	return ok ? ptr : nil
 }
 
@@ -115,6 +115,10 @@ store_resource :: proc(value: $T) {
 
 	id := async.add_resource(res)
 	worker_resources[T] = id
+}
+
+remove_resource :: proc($T: typeid) {
+	delete_key(&worker_resources, T)
 }
 
 @(private = "file")
