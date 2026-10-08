@@ -156,11 +156,42 @@ scheduler_block_with_poly :: proc(
 	sleep: time.Duration = 0,
 ) {
 	for {
-		storage.get_ptr(&scheduler.slots, u64(handle)) or_break
+		storage.get_ptr(&scheduler.resources, u64(handle)) or_break
 		tick(a)
 		poll()
 		if sleep > 0 do time.sleep(sleep)
 	}
+}
+
+repeat :: proc(ud: rawptr, fn: proc(ud: rawptr), cancel: Cancel_Token) {
+	State :: struct {
+		closure: Closure,
+		cancel:  Cancel_Token,
+	}
+
+	res: Resource
+	load_inline(&res.ud, State)^ = State {
+		cancel  = cancel,
+		closure = Closure{ud, fn},
+	}
+	id := add_resource(res)
+
+	trampoline :: proc(ud: rawptr) {
+		id := transmute(u64)(ud)
+		res, ok := try_get_resource(id)
+		if !ok do return
+
+		state := load_inline(&res.ud, State)
+		if is_triggered(state.cancel) {
+			try_remove_resource(id)
+			return
+		}
+
+		state.closure.fn(state.closure.ud)
+		next_tick(trampoline, ud)
+	}
+
+	next_tick(trampoline, transmute(rawptr)(id))
 }
 
 poll :: proc() {
@@ -371,4 +402,3 @@ has_resource :: #force_inline proc(id: u64) -> bool {
 	_, ok := storage.get_ptr(&scheduler.resources, id)
 	return ok
 }
-
