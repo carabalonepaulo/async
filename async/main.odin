@@ -340,12 +340,12 @@ has_resource :: #force_inline proc(id: u64) -> bool {
 }
 
 try_get_ref :: #force_inline proc(ref: Ref($T)) -> (ptr: ^T, ok: bool) {
-	ud := storage.get_ptr(&scheduler.refs, ref.id) or_return
+	ud := storage.get(&scheduler.refs, ref.id) or_return
 	return (^T)(ud), true
 }
 
 add_ref :: #force_inline proc(ptr: ^$T) -> Ref(T) {
-	id := storage.add(&scheduler.refs, rawptr(ptr))
+	id := storage.add(&scheduler.refs, ptr)
 	return Ref(T){id = id}
 }
 

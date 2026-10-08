@@ -6,7 +6,6 @@ import "core:sync/chan"
 import "core:thread"
 
 import ".."
-import "../storage"
 import "hl"
 
 DEFAULT_CAPACITY :: 1024
