@@ -1,8 +1,9 @@
 package main
 
-import "../async"
 import "core:fmt"
 import "core:time"
+
+import "../async"
 
 join_task_a :: proc() {
 	async.sleep(3 * time.Second)
@@ -19,4 +20,3 @@ join_demo :: proc() {
 	async.spawn(a, join_task_b)
 	async.run(1 * time.Millisecond)
 }
-

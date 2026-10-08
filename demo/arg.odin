@@ -1,8 +1,8 @@
 package main
 
-import "../async"
 import "core:fmt"
-import "core:time"
+
+import "../async"
 
 Person :: struct {
 	name: string,
@@ -16,6 +16,5 @@ arg_coro :: proc(person: Person) {
 
 arg_demo :: proc() {
 	person := Person{"Soreto", 30}
-	async.spawn(person, arg_coro)
-	async.run(1 * time.Millisecond)
+	async.block(async.spawn(person, arg_coro))
 }

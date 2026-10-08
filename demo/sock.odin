@@ -1,11 +1,12 @@
 package main
 
-import "../async"
-import "../async/io"
 import "core:fmt"
 import "core:nbio"
 import "core:net"
 import "core:time"
+
+import "../async"
+import "../async/io"
 
 sock_server :: proc() {
 	listener, err := io.listen_tcp({net.IP4_Any, 5059})
@@ -49,6 +50,5 @@ sock_client :: proc() {
 sock_demo :: proc() {
 	async.spawn(sock_server)
 	async.spawn(sock_client)
-	async.run(io.poll)
+	async.run()
 }
-

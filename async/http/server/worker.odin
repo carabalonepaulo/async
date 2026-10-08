@@ -44,11 +44,11 @@ worker :: proc(
 	defer io.deinit()
 
 	init_handle := async.spawn(hooks, proc(hooks: []Worker_Hook) {for &wr in hooks do wr.init(&wr)})
-	async.block(init_handle, io.poll)
+	async.block(init_handle)
 
 	defer {
 		deinit_handle := async.spawn(hooks, proc(hooks: []Worker_Hook) {for &wr in hooks do wr.deinit(&wr)})
-		async.block(deinit_handle, io.poll)
+		async.block(deinit_handle)
 	}
 
 	cancel_all :: proc(cancel_tokens: ^map[async.Cancel_Token]bool) {
@@ -62,7 +62,6 @@ worker :: proc(
 
 		for {
 			async.poll()
-			io.poll()
 			if should_close^ do cancel_all(&cancel_tokens)
 			for msg in chan.try_recv(msgs) do async.spawn(msg, &cancel_tokens, begin_receive)
 			if async.get_pending() == 0 do break

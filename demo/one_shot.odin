@@ -1,8 +1,9 @@
 package main
 
-import "../async"
 import "core:fmt"
 import "core:time"
+
+import "../async"
 
 Giga_Type :: struct {
 	n:   int,
@@ -54,4 +55,3 @@ one_shot_demo :: proc() {
 
 	async.block(a, 1 * time.Millisecond)
 }
-

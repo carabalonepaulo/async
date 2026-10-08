@@ -57,18 +57,6 @@ branch :: proc {
 	wait_group_branch,
 }
 
-run :: proc {
-	scheduler_run,
-	scheduler_run_with,
-	scheduler_run_with_poly,
-}
-
-block :: proc {
-	scheduler_block,
-	scheduler_block_with,
-	scheduler_block_with_poly,
-}
-
 into_rawptr :: proc {
 	handle_into_rawptr,
 	chan_into_rawptr,
@@ -88,4 +76,3 @@ clear :: proc {
 len :: proc {
 	chan_len,
 }
-

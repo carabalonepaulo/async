@@ -1,9 +1,10 @@
 package main
 
-import "../async"
-import "../async/io"
 import "core:fmt"
 import "core:mem"
+
+import "../async"
+import "../async/io"
 
 main :: proc() {
 	track: mem.Tracking_Allocator
@@ -49,4 +50,3 @@ main :: proc() {
 	// http_demo()
 	sleep_demo()
 }
-

@@ -1,9 +1,9 @@
 package main
 
-import "../async"
-
 import "core:fmt"
 import "core:time"
+
+import "../async"
 
 task :: proc(n: int) {
 	fmt.printfln("[task] sleeping for %vs...", n)
@@ -31,4 +31,3 @@ sleep_demo :: proc() {
 	async.run(1 * time.Millisecond)
 	fmt.println("[main] quit")
 }
-

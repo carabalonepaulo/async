@@ -10,11 +10,16 @@ schedule :: proc {
 }
 
 schedule_without_data :: proc(fn: proc() -> bool) {
+	State :: struct {
+		fn: proc() -> bool,
+	}
+
 	task: Task
-	task.ud[0] = transmute(rawptr)(fn)
+	load_inline(&task.ud, State)^ = State{fn}
+
 	task.fn = proc(ud: ^[CASE_INLINE_STORAGE]rawptr) -> bool {
-		fn := transmute(proc() -> bool)(ud[0])
-		return fn()
+		state := load_inline(ud, State)
+		return state.fn()
 	}
 	queue.enqueue(&scheduler.scheduled, task)
 }
@@ -32,6 +37,7 @@ schedule_with_poly :: proc(a: $A, fn: proc(a: A) -> bool) {
 		state := load_inline(ud, State)
 		return state.fn(state.a)
 	}
+	queue.enqueue(&scheduler.scheduled, task)
 }
 
 schedule_with_poly2 :: proc(a: $A, b: $B, fn: proc(a: A, b: B) -> bool) {
@@ -48,6 +54,7 @@ schedule_with_poly2 :: proc(a: $A, b: $B, fn: proc(a: A, b: B) -> bool) {
 		state := load_inline(ud, State)
 		return state.fn(state.a, state.b)
 	}
+	queue.enqueue(&scheduler.scheduled, task)
 }
 
 schedule_with_poly3 :: proc(a: $A, b: $B, c: $C, fn: proc(a: A, b: B, c: C) -> bool) {
@@ -65,4 +72,5 @@ schedule_with_poly3 :: proc(a: $A, b: $B, c: $C, fn: proc(a: A, b: B, c: C) -> b
 		state := load_inline(ud, State)
 		return state.fn(state.a, state.b, state.c)
 	}
+	queue.enqueue(&scheduler.scheduled, task)
 }

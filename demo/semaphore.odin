@@ -1,8 +1,9 @@
 package main
 
-import "../async"
 import "core:fmt"
 import "core:time"
+
+import "../async"
 
 @(private = "file")
 child :: proc(sem: async.Semaphore, cancel: async.Cancel_Token, count: ^int) {
@@ -35,7 +36,5 @@ parent :: proc() {
 }
 
 semaphore_demo :: proc() {
-	async.spawn(parent)
-	async.run(1 * time.Millisecond)
+	async.block(async.spawn(parent))
 }
-

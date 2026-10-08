@@ -1,8 +1,12 @@
 package async_aslet
 
+import "base:runtime"
 import "core:mem"
 import "core:sync/chan"
 import "core:thread"
+
+import ".."
+import "../storage"
 import "hl"
 
 DEFAULT_CAPACITY :: 1024
@@ -32,12 +36,31 @@ create_consumer :: proc(
 	self: ^Worker,
 	cap: int = DEFAULT_CAPACITY,
 ) -> (
-	consumer: Consumer,
+	consumer: ^Consumer,
 	err: mem.Allocator_Error,
 ) {
 	out_ch := chan.create_buffered(chan.Chan(Response), cap, context.allocator) or_return
 	defer if err != nil do chan.destroy(&out_ch)
-	return Consumer{self.in_ch, out_ch}, .None
+
+	sched := async.get_scheduler()
+	entry := storage.entry(&sched.resources)
+	id := storage.get_id(&entry)
+
+	consumer = new(Consumer, runtime.default_allocator()) or_return
+	consumer^ = Consumer{id, self.in_ch, out_ch}
+
+	res: async.Resource
+	res.ud[0] = consumer
+	storage.insert(&entry, res)
+
+	async.schedule(id, proc(id: u64) -> bool {
+		res := async.try_get_resource(id) or_return
+		consumer := (^Consumer)(res.ud[0])
+		poll(consumer)
+		return true
+	})
+
+	return consumer, .None
 }
 
 @(private)

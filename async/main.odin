@@ -77,7 +77,7 @@ Scheduler :: struct {
 	finished:          [dynamic]tw.Task,
 }
 
-@(thread_local)
+@(private, thread_local)
 scheduler: Scheduler
 
 scheduler_init :: proc() {
@@ -111,55 +111,16 @@ scheduler_deinit :: proc() {
 	scheduler = {}
 }
 
-scheduler_run :: proc(sleep: time.Duration = 0) {
+run :: proc(sleep: time.Duration = 0) {
 	for get_pending() > 0 {
 		poll()
 		if sleep > 0 do time.sleep(sleep)
 	}
 }
 
-scheduler_run_with :: proc(tick: proc(), sleep: time.Duration = 0) {
-	for get_pending() > 0 {
-		tick()
-		poll()
-		if sleep > 0 do time.sleep(sleep)
-	}
-}
-
-scheduler_run_with_poly :: proc(arg: $T, tick: proc(arg: T), sleep: time.Duration = 0) {
-	for get_pending() > 0 {
-		tick(arg)
-		poll()
-		if sleep > 0 do time.sleep(sleep)
-	}
-}
-
-scheduler_block :: proc(handle: Handle, sleep: time.Duration = 0) {
+block :: proc(handle: Handle, sleep: time.Duration = 0) {
 	for {
 		storage.get_ptr(&scheduler.resources, u64(handle)) or_break
-		poll()
-		if sleep > 0 do time.sleep(sleep)
-	}
-}
-
-scheduler_block_with :: proc(handle: Handle, tick: proc(), sleep: time.Duration = 0) {
-	for {
-		storage.get_ptr(&scheduler.resources, u64(handle)) or_break
-		tick()
-		poll()
-		if sleep > 0 do time.sleep(sleep)
-	}
-}
-
-scheduler_block_with_poly :: proc(
-	handle: Handle,
-	a: $A,
-	tick: proc(a: A),
-	sleep: time.Duration = 0,
-) {
-	for {
-		storage.get_ptr(&scheduler.resources, u64(handle)) or_break
-		tick(a)
 		poll()
 		if sleep > 0 do time.sleep(sleep)
 	}

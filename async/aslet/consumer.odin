@@ -3,7 +3,6 @@ package async_aslet
 import "base:runtime"
 import "core:strings"
 import "core:sync/chan"
-import "core:thread"
 import "core:time"
 
 import ".."
@@ -28,6 +27,7 @@ Open_Flag :: hl.Open_Flag
 Transaction_Mode :: hl.Transaction_Mode
 
 Consumer :: struct {
+	id:     u64,
 	in_ch:  chan.Chan(Request),
 	out_ch: chan.Chan(Response),
 }
@@ -35,8 +35,12 @@ Consumer :: struct {
 destroy :: proc(self: ^Consumer) {
 	drain(self)
 
+	async.try_remove_resource(self.id)
+
 	chan.close(self.out_ch)
 	chan.destroy(self.out_ch)
+
+	free(self, allocator = runtime.default_allocator())
 }
 
 open :: proc(

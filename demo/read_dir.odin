@@ -1,8 +1,9 @@
 package main
 
+import "core:fmt"
+
 import "../async"
 import "../async/io"
-import "core:fmt"
 
 @(private = "file")
 task :: proc(running: ^bool) {
@@ -36,6 +37,5 @@ read_dir_demo :: proc() {
 		async.join_many({a, b})
 	})
 
-	async.block(handle_c, io.poll)
+	async.block(handle_c)
 }
-

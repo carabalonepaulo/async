@@ -1,8 +1,9 @@
 package main
 
+import "core:fmt"
+
 import "../async"
 import "../async/aslet"
-import "core:fmt"
 
 CREATE :: `create table person (
 	    id integer primary key autoincrement,
@@ -39,12 +40,8 @@ sqlite_demo :: proc() {
 	defer aslet.deinit(&w)
 
 	a, _ := aslet.create_consumer(&w)
-	defer aslet.destroy(&a)
+	defer aslet.destroy(a)
 
-	async.spawn(&a, sqlite_task)
-
-	for async.get_pending() > 0 {
-		async.poll()
-		aslet.poll(&a)
-	}
+	async.spawn(a, sqlite_task)
+	async.run()
 }

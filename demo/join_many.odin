@@ -1,8 +1,9 @@
 package main
 
-import "../async"
 import "core:fmt"
 import "core:time"
+
+import "../async"
 
 @(private = "file")
 child_task :: proc() {
@@ -24,7 +25,5 @@ parent_task :: proc() {
 }
 
 join_many_demo :: proc() {
-	async.spawn(parent_task)
-	async.run(1 * time.Millisecond)
+	async.block(async.spawn(parent_task))
 }
-

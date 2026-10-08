@@ -1,13 +1,9 @@
 package main
 
-import "../async"
 import "core:fmt"
 import "core:time"
 
-Select_Arg :: struct {
-	ch_a: async.Chan(int),
-	ch_b: async.Chan(int),
-}
+import "../async"
 
 producer_a :: proc(ch: async.Chan(int)) {
 	async.sleep(5 * time.Millisecond)
@@ -23,14 +19,14 @@ producer_b :: proc(ch: async.Chan(int)) {
 	fmt.println("[B] end")
 }
 
-consumer_select :: proc(arg: Select_Arg) {
+consumer_select :: proc(ch_a, ch_b: async.Chan(int)) {
 	for i in 0 ..< 2 {
 		fmt.println("[select]", i)
 		a_val: int
 		b_val: int
 
 		idx := async.select(
-			{async.branch(arg.ch_a, &a_val), async.branch(arg.ch_b, &b_val)},
+			{async.branch(ch_a, &a_val), async.branch(ch_b, &b_val)},
 			timeout = 1 * time.Second,
 		)
 
@@ -52,11 +48,10 @@ select_demo :: proc() {
 
 	async.spawn(ch_a, producer_a)
 	async.spawn(ch_b, producer_b)
-	async.spawn(Select_Arg{ch_a, ch_b}, consumer_select)
+	async.spawn(ch_a, ch_b, consumer_select)
 
 	async.run(1 * time.Millisecond)
 
 	async.clear(ch_a)
 	async.clear(ch_b)
 }
-

@@ -1,10 +1,10 @@
 package main
 
-import "../async"
-import http "../async/http/client"
-
 import "core:fmt"
 import "core:time"
+
+import "../async"
+import http "../async/http/client"
 
 coroutine :: proc(client: ^http.Client) {
 	out := async.create_chan(http.Result); defer async.destroy(out)
@@ -46,7 +46,10 @@ http_demo :: proc() {
 	}
 	defer http.deinit(&client)
 
-	async.spawn(&client, coroutine)
-	async.run(&client, http.poll, 1 * time.Millisecond)
-}
+	async.schedule(&client, proc(client: ^http.Client) -> bool {
+		http.poll(client)
+		return true
+	})
 
+	async.block(async.spawn(&client, coroutine))
+}

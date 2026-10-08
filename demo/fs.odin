@@ -1,10 +1,10 @@
 package main
 
+import "core:fmt"
+import "core:os"
+
 import "../async"
 import "../async/io"
-import "core:fmt"
-
-import "core:os"
 
 FILE_NAME :: "hello.txt"
 
@@ -34,9 +34,6 @@ read_file :: proc() {
 }
 
 fs_demo :: proc() {
-	async.spawn(actions)
-	async.run(io.poll)
-
+	async.block(async.spawn(actions))
 	os.remove(FILE_NAME)
 }
-
