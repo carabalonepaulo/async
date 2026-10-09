@@ -1,7 +1,6 @@
 package async_aslet
 
 import ".."
-import "core:sync/chan"
 import "hl"
 
 Conn :: struct {
@@ -26,7 +25,7 @@ batch_insert :: proc(self: ^Conn, sql: string, params: [][]Param) -> Result {
 		params = params,
 	}
 
-	if !chan.send(self.aslet.in_ch, op) do return .Error
+	if !send(self.aslet, op) do return .Error
 	return async.recv(os)
 }
 
@@ -45,7 +44,7 @@ conn_exec :: proc(self: ^Conn, sql: string, params: []Param) -> Result {
 		params = params,
 	}
 
-	if !chan.send(self.aslet.in_ch, op) do return .Error
+	if !send(self.aslet, op) do return .Error
 	return async.recv(os)
 }
 
@@ -84,7 +83,7 @@ conn_fetch :: proc(
 		run    = run,
 	}
 
-	if !chan.send(self.aslet.in_ch, op) do return .Error
+	if !send(self.aslet, op) do return .Error
 	return async.recv(os)
 }
 
@@ -99,8 +98,8 @@ close :: proc(self: ^Conn) -> Result {
 	op := prep(self.aslet, .Close, cb)
 	op.ud[0] = transmute(rawptr)(async.get_handle())
 	op.close = Close{self.conn}
-	if !chan.send(self.aslet.in_ch, op) do return .Error
 
+	if !send(self.aslet, op) do return .Error
 	async.yield()
 	return .Ok
 }
@@ -132,7 +131,7 @@ transaction :: proc(
 		mode      = mode,
 	}
 
-	chan.send(self.aslet.in_ch, op) or_return
+	send(self.aslet, op) or_return
 	res := async.recv(os)
 	if res.b {
 		conn := Conn {
@@ -159,7 +158,7 @@ rollback :: proc(self: ^Transaction) -> (ok: bool) {
 		conn = self.conn.conn,
 	}
 
-	chan.send(self.conn.aslet.in_ch, op) or_return
+	send(self.conn.aslet, op) or_return
 	return async.recv(os)
 }
 
@@ -179,7 +178,7 @@ commit :: proc(self: ^Transaction) -> (ok: bool) {
 		conn = self.conn.conn,
 	}
 
-	chan.send(self.conn.aslet.in_ch, op) or_return
+	send(self.conn.aslet, op) or_return
 	return async.recv(os)
 }
 

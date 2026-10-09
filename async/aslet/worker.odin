@@ -1,6 +1,7 @@
 package async_aslet
 
 import "base:runtime"
+import "core:container/pool"
 import "core:mem"
 import "core:sync/chan"
 import "core:thread"
@@ -41,9 +42,13 @@ create_consumer :: proc(
 	out_ch := chan.create_buffered(chan.Chan(^Operation), cap, context.allocator) or_return
 	defer if err != nil do chan.destroy(&out_ch)
 
+	op_pool: pool.Pool(Operation)
+	pool.init(&op_pool, "_link") or_return
+	defer if err != nil do pool.destroy(&op_pool)
+
 	consumer = new(Consumer, runtime.default_allocator()) or_return
 	ref := async.add_ref(consumer)
-	consumer^ = Consumer{ref.id, self.in_ch, out_ch}
+	consumer^ = Consumer{ref.id, op_pool, self.in_ch, out_ch}
 
 	async.schedule(ref, proc(ref: async.Ref(Consumer)) -> bool {
 		consumer := async.try_get_ref(ref) or_return

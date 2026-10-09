@@ -20,6 +20,7 @@ Operation :: struct {
 	state:           ^State,
 	type:            Type,
 	using specifics: Specifics,
+	_link:           ^Operation,
 }
 
 Specifics :: struct #raw_union {

@@ -29,18 +29,21 @@ Transaction_Mode :: hl.Transaction_Mode
 
 Consumer :: struct {
 	id:     u64,
+	pool:   pool.Pool(Operation),
 	in_ch:  chan.Chan(^Operation),
 	out_ch: chan.Chan(^Operation),
 }
 
 destroy :: proc(self: ^Consumer) {
 	drain(self)
+	assert(pool.num_outstanding(&self.pool) == 0)
 
 	ref := async.as_ref(self.id, Consumer)
 	async.try_remove_ref(ref)
 
 	chan.close(self.out_ch)
 	chan.destroy(self.out_ch)
+	pool.destroy(&self.pool)
 
 	free(self, allocator = runtime.default_allocator())
 }
@@ -69,7 +72,7 @@ open :: proc(
 		open_flag = open_flag,
 	}
 
-	chan.send(self.in_ch, op) or_return
+	send(self, op) or_return
 	res := async.recv(os)
 	if res.b do return Conn{self, res.a, path, open_flag}, true
 	else do return {}, false
@@ -80,7 +83,7 @@ poll :: proc(self: ^Consumer, timeout: time.Duration = NO_TIMEOUT) {
 	for {
 		op := chan.try_recv(self.out_ch) or_break
 		op.cb(op)
-		release_operation(op)
+		release_operation(self, op)
 		if time.since(start) >= timeout do break
 	}
 }
@@ -89,23 +92,24 @@ drain :: proc(self: ^Consumer) {
 	for {
 		op := chan.try_recv(self.out_ch) or_break
 		op.cb(op)
-		release_operation(op)
+		release_operation(self, op)
 	}
 }
 
 @(private)
-acquire_operation :: proc() -> ^Operation {
-	return new(Operation, allocator = runtime.default_allocator())
+send :: proc(self: ^Consumer, op: ^Operation) -> (ok: bool) {
+	defer if !ok do pool.put(&self.pool, op)
+	return chan.send(self.in_ch, op)
 }
 
 @(private)
-release_operation :: proc(op: ^Operation) {
-	free(op, allocator = runtime.default_allocator())
+release_operation :: proc(consumer: ^Consumer, op: ^Operation) {
+	pool.put(&consumer.pool, op)
 }
 
 @(private)
 prep :: proc(consumer: ^Consumer, type: Type, cb: Callback) -> ^Operation {
-	op := acquire_operation()
+	op := pool.get(&consumer.pool)
 	op.out_ch = consumer.out_ch
 	op.type = type
 	op.cb = cb
