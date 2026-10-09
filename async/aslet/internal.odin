@@ -10,13 +10,14 @@ import "hl"
 
 @(private)
 send :: proc(self: ^Consumer, op: ^Operation) -> (ok: bool) {
-	defer if !ok do pool.put(&self.pool, op)
+	defer if !ok do release_operation(self, op)
 	return chan.send(self.in_ch, op)
 }
 
 @(private)
-release_operation :: proc(consumer: ^Consumer, op: ^Operation) {
-	pool.put(&consumer.pool, op)
+release_operation :: proc(self: ^Consumer, op: ^Operation) {
+	self.pending -= 1
+	pool.put(self.pool, op)
 }
 
 @(private)
@@ -52,9 +53,10 @@ try :: proc(
 }
 
 @(private)
-prep :: proc(consumer: ^Consumer, type: Type, cb: Callback) -> ^Operation {
-	op := pool.get(&consumer.pool)
-	op.out_ch = consumer.out_ch
+prep :: proc(self: ^Consumer, type: Type, cb: Callback) -> ^Operation {
+	self.pending += 1
+	op := pool.get(self.pool)
+	op.out_ch = self.out_ch
 	op.type = type
 	op.cb = cb
 	op.state = .Pending

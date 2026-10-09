@@ -28,22 +28,22 @@ Open_Flag :: hl.Open_Flag
 Transaction_Mode :: hl.Transaction_Mode
 
 Consumer :: struct {
-	id:     u64,
-	pool:   pool.Pool(Operation),
-	in_ch:  chan.Chan(^Operation),
-	out_ch: chan.Chan(^Operation),
+	id:      u64,
+	pool:    ^pool.Pool(Operation),
+	in_ch:   chan.Chan(^Operation),
+	out_ch:  chan.Chan(^Operation),
+	pending: int,
 }
 
 destroy :: proc(self: ^Consumer) {
 	drain(self)
-	assert(pool.num_outstanding(&self.pool) == 0)
+	assert(self.pending == 0)
 
 	ref := async.as_ref(self.id, Consumer)
 	async.try_remove_ref(ref)
 
 	chan.close(self.out_ch)
 	chan.destroy(self.out_ch)
-	pool.destroy(&self.pool)
 
 	free(self, allocator = runtime.default_allocator())
 }
