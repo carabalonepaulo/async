@@ -57,25 +57,20 @@ open :: proc(
 	ok: bool,
 ) {
 	cb :: proc(op: ^Operation) {
-		os := transmute(async.One_Shot(Pair(rawptr, bool)))(op.ud[0])
-		async.send(os, Pair(rawptr, bool){op.open.conn, op.open.ok})
+		os := transmute(async.One_Shot(Pair(Conn, bool)))(op.ud[0])
+		async.send(os, Pair(Conn, bool){op.open.conn, op.open.ok})
 	}
 
-	os := async.create_one_shot(Pair(rawptr, bool))
+	os := async.create_one_shot(Pair(Conn, bool))
 	path := strings.clone(path)
 	defer if !ok do delete(path)
 
-	op := prep(self, .Open, cb)
+	op := prep_open(self, path, open_flag, cb)
 	op.ud[0] = transmute(rawptr)(os)
-	op.open = Open {
-		path      = path,
-		open_flag = open_flag,
-	}
 
 	send(self, op) or_return
 	res := async.recv(os)
-	if res.b do return Conn{self, res.a, path, open_flag}, true
-	else do return {}, false
+	return res.a, res.b
 }
 
 poll :: proc(self: ^Consumer, timeout: time.Duration = NO_TIMEOUT) {

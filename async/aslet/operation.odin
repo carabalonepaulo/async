@@ -47,10 +47,11 @@ Type :: enum {
 
 Open :: struct {
 	// request
+	consumer:  ^Consumer,
 	path:      string,
 	open_flag: Open_Flag,
 	// response
-	conn:      rawptr,
+	conn:      Conn,
 	ok:        bool,
 }
 
@@ -90,12 +91,14 @@ Fetch :: struct {
 
 Transaction_OP :: struct {
 	// request
-	path:      string,
-	open_flag: Open_Flag,
-	mode:      Transaction_Mode,
+	consumer:    ^Consumer,
+	path:        string,
+	open_flag:   Open_Flag,
+	mode:        Transaction_Mode,
 	// response
-	conn:      rawptr,
-	ok:        bool,
+	transaction: Transaction,
+	// conn:      rawptr,
+	ok:          bool,
 }
 
 Rollback :: struct {

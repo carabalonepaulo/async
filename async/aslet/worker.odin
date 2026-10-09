@@ -90,7 +90,12 @@ on_open_request :: proc(req: ^Open) {
 	conn := hl.open(req.path, req.open_flag)
 	if conn != nil {
 		req.ok = true
-		req.conn = conn
+		req.conn = Conn {
+			aslet     = req.consumer,
+			conn      = conn,
+			path      = req.path,
+			open_flag = req.open_flag,
+		}
 	}
 }
 
@@ -123,7 +128,10 @@ on_transaction_request :: proc(req: ^Transaction_OP) {
 	if conn == nil do return
 
 	if hl.begin(conn, req.mode) == .Ok {
-		req.conn = conn
+		req.transaction = Transaction {
+			used = false,
+			conn = Conn{aslet = req.consumer, conn = conn},
+		}
 		req.ok = true
 	} else do hl.close(conn)
 }

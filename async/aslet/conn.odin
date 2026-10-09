@@ -1,7 +1,6 @@
 package async_aslet
 
 import ".."
-import "hl"
 
 Conn :: struct {
 	aslet:     ^Consumer,
@@ -17,13 +16,8 @@ batch_insert :: proc(self: ^Conn, sql: string, params: [][]Param) -> Result {
 	}
 
 	os := async.create_one_shot(Result)
-	op := prep(self.aslet, .Batch_Insert, cb)
+	op := prep_batch_insert(self.aslet, self.conn, sql, params, cb)
 	op.ud[0] = transmute(rawptr)(os)
-	op.batch_insert = Batch_Insert {
-		conn   = self.conn,
-		sql    = sql,
-		params = params,
-	}
 
 	if !send(self.aslet, op) do return .Error
 	return async.recv(os)
@@ -36,13 +30,8 @@ conn_exec :: proc(self: ^Conn, sql: string, params: []Param) -> Result {
 	}
 
 	os := async.create_one_shot(Result)
-	op := prep(self.aslet, .Exec, cb)
+	op := prep_exec(self.aslet, self.conn, sql, params, cb)
 	op.ud[0] = transmute(rawptr)(os)
-	op.exec = Exec {
-		conn   = self.conn,
-		sql    = sql,
-		params = params,
-	}
 
 	if !send(self.aslet, op) do return .Error
 	return async.recv(os)
@@ -60,28 +49,9 @@ conn_fetch :: proc(
 		async.send(os, op.fetch.rc)
 	}
 
-	run :: proc(
-		conn: ^hl.Conn,
-		sql: string,
-		params: []Param,
-		out: rawptr,
-		limit: int,
-	) -> hl.Result {
-		typed_out := (^[dynamic]T)(out)
-		return hl.fetch(conn, sql, params, typed_out, limit)
-	}
-
 	os := async.create_one_shot(Result)
-	op := prep(self.aslet, .Fetch, cb)
+	op := prep_fetch(self.aslet, self.conn, sql, params, out, limit, cb)
 	op.ud[0] = transmute(rawptr)(os)
-	op.fetch = Fetch {
-		conn   = self.conn,
-		sql    = sql,
-		params = params,
-		out    = out,
-		limit  = limit,
-		run    = run,
-	}
 
 	if !send(self.aslet, op) do return .Error
 	return async.recv(os)
@@ -95,9 +65,8 @@ close :: proc(self: ^Conn) -> Result {
 
 	delete(self.path)
 
-	op := prep(self.aslet, .Close, cb)
+	op := prep_close(self.aslet, self.conn, cb)
 	op.ud[0] = transmute(rawptr)(async.get_handle())
-	op.close = Close{self.conn}
 
 	if !send(self.aslet, op) do return .Error
 	async.yield()
@@ -109,37 +78,19 @@ Transaction :: struct {
 	conn: Conn,
 }
 
-transaction :: proc(
-	self: ^Conn,
-	mode: Transaction_Mode,
-	ud: rawptr,
-) -> (
-	transaction: Transaction,
-	ok: bool,
-) {
+transaction :: proc(self: ^Conn, mode: Transaction_Mode) -> (transaction: Transaction, ok: bool) {
 	cb :: proc(op: ^Operation) {
-		os := transmute(async.One_Shot(Pair(rawptr, bool)))(op.ud[0])
-		async.send(os, Pair(rawptr, bool){op.transaction.conn, op.transaction.ok})
+		os := transmute(async.One_Shot(Pair(Transaction, bool)))(op.ud[0])
+		async.send(os, Pair(Transaction, bool){op.transaction.transaction, op.transaction.ok})
 	}
 
-	os := async.create_one_shot(Pair(rawptr, bool))
-	op := prep(self.aslet, .Transaction, cb)
+	os := async.create_one_shot(Pair(Transaction, bool))
+	op := prep_transaction(self.aslet, self.path, self.open_flag, mode, cb)
 	op.ud[0] = transmute(rawptr)(os)
-	op.transaction = Transaction_OP {
-		path      = self.path,
-		open_flag = self.open_flag,
-		mode      = mode,
-	}
 
 	send(self.aslet, op) or_return
 	res := async.recv(os)
-	if res.b {
-		conn := Conn {
-			aslet = self.aslet,
-			conn  = res.a,
-		}
-		return Transaction{false, conn}, true
-	} else do return {}, false
+	return res.a, res.b
 }
 
 rollback :: proc(self: ^Transaction) -> (ok: bool) {
@@ -152,11 +103,8 @@ rollback :: proc(self: ^Transaction) -> (ok: bool) {
 	}
 
 	os := async.create_one_shot(bool)
-	op := prep(self.conn.aslet, .Rollback, cb)
+	op := prep_rollback(self.conn.aslet, self.conn.conn, cb)
 	op.ud[0] = transmute(rawptr)(os)
-	op.rollback = Rollback {
-		conn = self.conn.conn,
-	}
 
 	send(self.conn.aslet, op) or_return
 	return async.recv(os)
@@ -172,11 +120,8 @@ commit :: proc(self: ^Transaction) -> (ok: bool) {
 	}
 
 	os := async.create_one_shot(bool)
-	op := prep(self.conn.aslet, .Commit, cb)
+	op := prep_commit(self.conn.aslet, self.conn.conn, cb)
 	op.ud[0] = transmute(rawptr)(os)
-	op.commit = Commit {
-		conn = self.conn.conn,
-	}
 
 	send(self.conn.aslet, op) or_return
 	return async.recv(os)
