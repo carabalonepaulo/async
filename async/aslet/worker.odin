@@ -65,7 +65,7 @@ worker_run :: proc(input_ch: chan.Chan(^Operation)) {
 	for {
 		msg := chan.recv(input_ch) or_break
 
-		_, ok := intrinsics.atomic_compare_exchange_strong(&msg.state, .Pending, .Done)
+		_, ok := intrinsics.atomic_compare_exchange_strong(&msg.state, .Pending, .Claimed)
 		if !ok {
 			chan.send(msg.out_ch, msg)
 			continue

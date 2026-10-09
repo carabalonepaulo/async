@@ -76,8 +76,7 @@ poll :: proc(self: ^Consumer, timeout: time.Duration = NO_TIMEOUT) {
 	start := time.now()
 	for {
 		op := chan.try_recv(self.out_ch) or_break
-		if op.state == .Done do op.cb(op)
-		release_operation(self, op)
+		dispatch(self, op)
 		if time.since(start) >= timeout do break
 	}
 }
@@ -85,7 +84,12 @@ poll :: proc(self: ^Consumer, timeout: time.Duration = NO_TIMEOUT) {
 drain :: proc(self: ^Consumer) {
 	for {
 		op := chan.try_recv(self.out_ch) or_break
-		if op.state == .Done do op.cb(op)
-		release_operation(self, op)
+		dispatch(self, op)
 	}
+}
+
+@(private)
+dispatch :: proc(self: ^Consumer, op: ^Operation) {
+	if op.state == .Claimed do op.cb(op)
+	release_operation(self, op)
 }

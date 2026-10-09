@@ -9,7 +9,7 @@ MAX_USER_DATA :: 5
 State :: enum {
 	Pending,
 	Canceled,
-	Done,
+	Claimed,
 }
 
 Callback :: proc(op: ^Operation)
