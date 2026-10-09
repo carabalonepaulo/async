@@ -81,10 +81,10 @@ worker_run :: proc(input_ch: chan.Chan(Request)) {
 
 @(private = "file")
 on_open_request :: proc(req: ^Open_Request) {
-	conn := hl.open(req.path, req.open_flag)
+	conn := hl.open(req.data.path, req.data.open_flag)
 	msg := Open_Response {
-		path      = req.path,
-		open_flag = req.open_flag,
+		path      = req.data.path,
+		open_flag = req.data.open_flag,
 		ud        = req.ud,
 		cb        = req.cb,
 	}
@@ -99,34 +99,34 @@ on_open_request :: proc(req: ^Open_Request) {
 
 @(private = "file")
 on_close_request :: proc(req: ^Close_Request) {
-	hl.close((^hl.Conn)(req.conn))
+	hl.close((^hl.Conn)(req.data.conn))
 	chan.send(req.out_ch, Close_Response{ud = req.ud, cb = req.cb})
 }
 
 @(private = "file")
 on_exec_request :: proc(req: ^Exec_Request) {
-	conn := (^hl.Conn)(req.conn)
-	rc := hl.exec(conn, req.sql, req.params)
+	conn := (^hl.Conn)(req.data.conn)
+	rc := hl.exec(conn, req.data.sql, req.data.params)
 	chan.send(req.out_ch, Exec_Response{rc = rc, ud = req.ud, cb = req.cb})
 }
 
 @(private = "file")
 on_fetch_request :: proc(req: ^Fetch_Request) {
-	conn := (^hl.Conn)(req.conn)
-	rc := req.run(conn, req.sql, req.params, req.out, req.limit)
+	conn := (^hl.Conn)(req.data.conn)
+	rc := req.data.run(conn, req.data.sql, req.data.params, req.data.out, req.data.limit)
 	chan.send(req.out_ch, Fetch_Response{rc = rc, ud = req.ud, cb = req.cb})
 }
 
 @(private = "file")
 on_batch_insert_request :: proc(req: ^Batch_Insert_Request) {
-	conn := (^hl.Conn)(req.conn)
-	rc := hl.batch_insert(conn, req.sql, req.params)
+	conn := (^hl.Conn)(req.data.conn)
+	rc := hl.batch_insert(conn, req.data.sql, req.data.params)
 	chan.send(req.out_ch, Batch_Insert_Response{rc = rc, ud = req.ud, cb = req.cb})
 }
 
 @(private = "file")
 on_transaction_request :: proc(req: ^Transaction_Request) {
-	conn := hl.open(req.path, req.open_flag)
+	conn := hl.open(req.data.path, req.data.open_flag)
 	resp := Transaction_Response {
 		ok = false,
 		ud = req.ud,
@@ -135,7 +135,7 @@ on_transaction_request :: proc(req: ^Transaction_Request) {
 	defer chan.send(req.out_ch, resp)
 	if conn == nil do return
 
-	if hl.begin(conn, req.mode) == .Ok {
+	if hl.begin(conn, req.data.mode) == .Ok {
 		resp.conn = conn
 		resp.ok = true
 	} else do hl.close(conn)
@@ -143,7 +143,7 @@ on_transaction_request :: proc(req: ^Transaction_Request) {
 
 @(private = "file")
 on_rollback_request :: proc(req: ^Rollback_Request) {
-	conn := (^hl.Conn)(req.conn)
+	conn := (^hl.Conn)(req.data.conn)
 	rc := hl.rollback(conn)
 	hl.close(conn)
 	chan.send(req.out_ch, Rollback_Response{ok = rc == .Ok, ud = req.ud, cb = req.cb})
@@ -151,7 +151,7 @@ on_rollback_request :: proc(req: ^Rollback_Request) {
 
 @(private = "file")
 on_commit_request :: proc(req: ^Commit_Request) {
-	conn := (^hl.Conn)(req.conn)
+	conn := (^hl.Conn)(req.data.conn)
 	rc := hl.commit(conn)
 	hl.close(conn)
 	chan.send(req.out_ch, Commit_Response{ok = rc == .Ok, ud = req.ud, cb = req.cb})

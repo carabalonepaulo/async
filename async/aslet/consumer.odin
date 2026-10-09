@@ -61,10 +61,14 @@ open :: proc(
 	os := async.create_one_shot(Pair(Conn, bool))
 	ud := transmute(rawptr)(os)
 
-	ok = send(
-		self,
-		Open_Request{out_ch = self.out_ch, path = path, open_flag = open_flag, ud = ud, cb = cb},
-	)
+	task := Task(Open_Data, Open_Callback) {
+		out_ch = self.out_ch,
+		ud = ud,
+		cb = cb,
+		data = Open_Data{path = path, open_flag = open_flag},
+	}
+
+	ok = send(self, task)
 	if !ok {
 		delete(path)
 		return {}, false

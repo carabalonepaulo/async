@@ -18,17 +18,15 @@ batch_insert :: proc(self: ^Conn, sql: string, params: [][]Param) -> Result {
 
 	os := async.create_one_shot(Result)
 	ud := transmute(rawptr)(os)
-	ok := send(
-		self.aslet,
-		Batch_Insert_Request {
-			out_ch = self.aslet.out_ch,
-			conn = self.conn,
-			sql = sql,
-			params = params,
-			ud = ud,
-			cb = cb,
-		},
-	)
+
+	task := Task(Batch_Insert_Data, Batch_Insert_Callback) {
+		out_ch = self.aslet.out_ch,
+		ud = ud,
+		cb = cb,
+		data = Batch_Insert_Data{conn = self.conn, sql = sql, params = params},
+	}
+
+	ok := send(self.aslet, task)
 	if !ok do return .Error
 
 	return async.recv(os)
@@ -43,17 +41,15 @@ conn_exec :: proc(self: ^Conn, sql: string, params: []Param) -> Result {
 
 	os := async.create_one_shot(Result)
 	ud := transmute(rawptr)(os)
-	ok := send(
-		self.aslet,
-		Exec_Request {
-			out_ch = self.aslet.out_ch,
-			conn = self.conn,
-			sql = sql,
-			params = params,
-			ud = ud,
-			cb = cb,
-		},
-	)
+
+	task := Task(Exec_Data, Exec_Callback) {
+		out_ch = self.aslet.out_ch,
+		ud = ud,
+		cb = cb,
+		data = Exec_Data{conn = self.conn, sql = sql, params = params},
+	}
+
+	ok := send(self.aslet, task)
 	if !ok do return .Error
 
 	return async.recv(os)
@@ -85,20 +81,22 @@ conn_fetch :: proc(
 
 	os := async.create_one_shot(Result)
 	ud := transmute(rawptr)(os)
-	ok := send(
-		self.aslet,
-		Fetch_Request {
-			out_ch = self.aslet.out_ch,
+
+	task := Task(Fetch_Data, Fetch_Callback) {
+		out_ch = self.aslet.out_ch,
+		ud = ud,
+		cb = cb,
+		data = Fetch_Data {
 			conn = self.conn,
 			sql = sql,
 			params = params,
 			out = out,
 			limit = limit,
 			run = run,
-			ud = ud,
-			cb = cb,
 		},
-	)
+	}
+
+	ok := send(self.aslet, task)
 	if !ok do return .Error
 
 	return async.recv(os)
@@ -112,10 +110,15 @@ close :: proc(self: ^Conn) -> Result {
 
 	delete(self.path)
 	ud := transmute(rawptr)(async.get_handle())
-	ok := send(
-		self.aslet,
-		Close_Request{out_ch = self.aslet.out_ch, conn = self.conn, ud = ud, cb = cb},
-	)
+
+	task := Task(Close_Data, Close_Callback) {
+		out_ch = self.aslet.out_ch,
+		ud = ud,
+		cb = cb,
+		data = Close_Data{conn = self.conn},
+	}
+
+	ok := send(self.aslet, task)
 	if !ok do return .Error
 
 	async.yield()
@@ -144,17 +147,15 @@ transaction :: proc(
 
 	os := async.create_one_shot(Pair(Transaction, bool))
 	ud := transmute(rawptr)(os)
-	ok := send(
-		self.aslet,
-		Transaction_Request {
-			out_ch = self.aslet.out_ch,
-			path = self.path,
-			open_flag = self.open_flag,
-			mode = mode,
-			ud = ud,
-			cb = cb,
-		},
-	)
+
+	task := Task(Transaction_Data, Transaction_Callback) {
+		out_ch = self.aslet.out_ch,
+		ud = ud,
+		cb = cb,
+		data = Transaction_Data{path = self.path, open_flag = self.open_flag, mode = mode},
+	}
+
+	ok := send(self.aslet, task)
 	if !ok do return {}, false
 
 	res := async.recv(os)
@@ -173,11 +174,15 @@ rollback :: proc(self: ^Transaction) -> (ok: bool) {
 
 	os := async.create_one_shot(bool)
 	ud := transmute(rawptr)(os)
-	send(
-		self.conn.aslet,
-		Rollback_Request{out_ch = self.conn.aslet.out_ch, conn = self.conn.conn, ud = ud, cb = cb},
-	) or_return
 
+	task := Task(Rollback_Data, Rollback_Callback) {
+		out_ch = self.conn.aslet.out_ch,
+		ud = ud,
+		cb = cb,
+		data = Rollback_Data{conn = self.conn.conn},
+	}
+
+	send(self.conn.aslet, task) or_return
 	return async.recv(os)
 }
 
@@ -192,11 +197,15 @@ commit :: proc(self: ^Transaction) -> (ok: bool) {
 
 	os := async.create_one_shot(bool)
 	ud := transmute(rawptr)(os)
-	send(
-		self.conn.aslet,
-		Commit_Request{out_ch = self.conn.aslet.out_ch, conn = self.conn.conn, ud = ud, cb = cb},
-	) or_return
 
+	task := Task(Commit_Data, Commit_Callback) {
+		out_ch = self.conn.aslet.out_ch,
+		ud = ud,
+		cb = cb,
+		data = Commit_Data{conn = self.conn.conn},
+	}
+
+	send(self.conn.aslet, task) or_return
 	return async.recv(os)
 }
 
