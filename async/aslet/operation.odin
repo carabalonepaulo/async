@@ -1,6 +1,7 @@
 package async_aslet
 
 import "core:sync/chan"
+
 import "hl"
 
 MAX_USER_DATA :: 5
@@ -17,7 +18,7 @@ Operation :: struct {
 	out_ch:          chan.Chan(^Operation),
 	ud:              [MAX_USER_DATA]rawptr,
 	cb:              Callback,
-	state:           ^State,
+	state:           State,
 	type:            Type,
 	using specifics: Specifics,
 	_link:           ^Operation,
@@ -97,7 +98,6 @@ Transaction_OP :: struct {
 	mode:        Transaction_Mode,
 	// response
 	transaction: Transaction,
-	// conn:      rawptr,
 	ok:          bool,
 }
 

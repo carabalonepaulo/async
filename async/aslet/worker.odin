@@ -1,5 +1,6 @@
 package async_aslet
 
+import "base:intrinsics"
 import "base:runtime"
 import "core:container/pool"
 import "core:mem"
@@ -63,6 +64,13 @@ create_consumer :: proc(
 worker_run :: proc(input_ch: chan.Chan(^Operation)) {
 	for {
 		msg := chan.recv(input_ch) or_break
+
+		_, ok := intrinsics.atomic_compare_exchange_strong(&msg.state, .Pending, .Done)
+		if !ok {
+			chan.send(msg.out_ch, msg)
+			continue
+		}
+
 		switch msg.type {
 		case .Open:
 			on_open_request(&msg.open)

@@ -1,7 +1,6 @@
 package async_io
 
 import ".."
-import "core:fmt"
 import "core:nbio"
 import "core:net"
 
@@ -46,4 +45,3 @@ get_socket_cancel_error :: proc(sock: net.Any_Socket, $U: typeid, tcp_err: $A, u
 		return udp_err
 	}
 }
-

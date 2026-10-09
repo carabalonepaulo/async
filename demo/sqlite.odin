@@ -16,7 +16,10 @@ INSERT :: `insert into person (name, age) values (?1, ?2);`
 SELECT :: `select * from person;`
 
 sqlite_task :: proc(a: ^aslet.Consumer) {
-	conn, conn_ok := aslet.open(a, "test.db")
+	cancel := async.create_cancel_token()
+	// async.trigger(cancel)
+
+	conn, conn_ok := aslet.open(a, "test.db", cancel = cancel)
 	assert(conn_ok)
 	defer aslet.close(&conn)
 

@@ -1,8 +1,67 @@
 package async_aslet
 
+import "base:intrinsics"
+import "base:runtime"
+import "core:container/pool"
+import "core:sync/chan"
+
 import ".."
 import "hl"
 
+@(private)
+send :: proc(self: ^Consumer, op: ^Operation) -> (ok: bool) {
+	defer if !ok do pool.put(&self.pool, op)
+	return chan.send(self.in_ch, op)
+}
+
+@(private)
+release_operation :: proc(consumer: ^Consumer, op: ^Operation) {
+	pool.put(&consumer.pool, op)
+}
+
+@(private)
+try :: proc(
+	op: ^Operation,
+	cancel: Maybe(async.Cancel_Token),
+	$T: typeid,
+	ok: $E,
+	err: E,
+	loc := #caller_location,
+) -> (
+	T,
+	E,
+) {
+	os := async.create_one_shot(T)
+	op.ud[0] = transmute(rawptr)(os)
+
+	if cancel, cancel_ok := cancel.(async.Cancel_Token); cancel_ok {
+		res: T
+		idx := async.select({async.branch(cancel), async.branch(os, &res)})
+
+		if idx == 1 do return res, ok
+
+		_, ok := intrinsics.atomic_compare_exchange_strong(&op.state, .Pending, .Canceled)
+		if ok {
+			async.destroy(os)
+			return {}, err
+		}
+	}
+
+	res := async.recv(os)
+	return res, ok
+}
+
+@(private)
+prep :: proc(consumer: ^Consumer, type: Type, cb: Callback) -> ^Operation {
+	op := pool.get(&consumer.pool)
+	op.out_ch = consumer.out_ch
+	op.type = type
+	op.cb = cb
+	op.state = .Pending
+	return op
+}
+
+@(private)
 prep_open :: proc(
 	self: ^Consumer,
 	path: string,
@@ -18,6 +77,7 @@ prep_open :: proc(
 	return op
 }
 
+@(private)
 prep_batch_insert :: proc(
 	self: ^Consumer,
 	conn: rawptr,
@@ -34,6 +94,7 @@ prep_batch_insert :: proc(
 	return op
 }
 
+@(private)
 prep_exec :: proc(
 	self: ^Consumer,
 	conn: rawptr,
@@ -50,6 +111,7 @@ prep_exec :: proc(
 	return op
 }
 
+@(private)
 prep_fetch :: proc(
 	self: ^Consumer,
 	conn: rawptr,
@@ -82,12 +144,14 @@ prep_fetch :: proc(
 	return op
 }
 
+@(private)
 prep_close :: proc(self: ^Consumer, conn: rawptr, cb: Callback) -> ^Operation {
 	op := prep(self, .Close, cb)
 	op.close = Close{conn}
 	return op
 }
 
+@(private)
 prep_transaction :: proc(
 	self: ^Consumer,
 	path: string,
@@ -105,6 +169,7 @@ prep_transaction :: proc(
 	return op
 }
 
+@(private)
 prep_rollback :: proc(self: ^Consumer, conn: rawptr, cb: Callback) -> ^Operation {
 	op := prep(self, .Rollback, cb)
 	op.rollback = Rollback {
@@ -113,6 +178,7 @@ prep_rollback :: proc(self: ^Consumer, conn: rawptr, cb: Callback) -> ^Operation
 	return op
 }
 
+@(private)
 prep_commit :: proc(self: ^Consumer, conn: rawptr, cb: Callback) -> ^Operation {
 	op := prep(self, .Commit, cb)
 	op.commit = Commit {
