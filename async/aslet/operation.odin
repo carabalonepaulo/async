@@ -15,7 +15,6 @@ Callback :: proc(op: ^Operation)
 
 Operation :: struct {
 	out_ch:          chan.Chan(^Operation),
-	op:              ^Operation,
 	ud:              [MAX_USER_DATA]rawptr,
 	cb:              Callback,
 	state:           ^State,
@@ -40,7 +39,7 @@ Type :: enum {
 	Batch_Insert,
 	Exec,
 	Fetch,
-	Transcation,
+	Transaction,
 	Rollback,
 	Commit,
 }

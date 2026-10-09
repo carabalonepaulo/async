@@ -69,7 +69,7 @@ worker_run :: proc(input_ch: chan.Chan(^Operation)) {
 			on_exec_request(&msg.exec)
 		case .Fetch:
 			on_fetch_request(&msg.fetch)
-		case .Transcation:
+		case .Transaction:
 			on_transaction_request(&msg.transaction)
 		case .Rollback:
 			on_rollback_request(&msg.rollback)

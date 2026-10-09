@@ -1,6 +1,7 @@
 package async_aslet
 
 import "base:runtime"
+import "core:container/pool"
 import "core:strings"
 import "core:sync/chan"
 import "core:time"
@@ -61,17 +62,14 @@ open :: proc(
 	path := strings.clone(path)
 	defer if !ok do delete(path)
 
-	op := create_operation()
-	op.out_ch = self.out_ch
+	op := prep(self, .Open, cb)
 	op.ud[0] = transmute(rawptr)(os)
-	op.cb = cb
-	op.type = .Open
 	op.open = Open {
 		path      = path,
 		open_flag = open_flag,
 	}
-	chan.send(self.in_ch, op) or_return
 
+	chan.send(self.in_ch, op) or_return
 	res := async.recv(os)
 	if res.b do return Conn{self, res.a, path, open_flag}, true
 	else do return {}, false
@@ -82,6 +80,7 @@ poll :: proc(self: ^Consumer, timeout: time.Duration = NO_TIMEOUT) {
 	for {
 		op := chan.try_recv(self.out_ch) or_break
 		op.cb(op)
+		release_operation(op)
 		if time.since(start) >= timeout do break
 	}
 }
@@ -90,10 +89,25 @@ drain :: proc(self: ^Consumer) {
 	for {
 		op := chan.try_recv(self.out_ch) or_break
 		op.cb(op)
+		release_operation(op)
 	}
 }
 
 @(private)
-create_operation :: proc() -> ^Operation {
+acquire_operation :: proc() -> ^Operation {
 	return new(Operation, allocator = runtime.default_allocator())
+}
+
+@(private)
+release_operation :: proc(op: ^Operation) {
+	free(op, allocator = runtime.default_allocator())
+}
+
+@(private)
+prep :: proc(consumer: ^Consumer, type: Type, cb: Callback) -> ^Operation {
+	op := acquire_operation()
+	op.out_ch = consumer.out_ch
+	op.type = type
+	op.cb = cb
+	return op
 }
