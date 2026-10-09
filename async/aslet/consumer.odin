@@ -28,8 +28,8 @@ Transaction_Mode :: hl.Transaction_Mode
 
 Consumer :: struct {
 	id:     u64,
-	in_ch:  chan.Chan(Request),
-	out_ch: chan.Chan(Response),
+	in_ch:  chan.Chan(^Operation),
+	out_ch: chan.Chan(^Operation),
 }
 
 destroy :: proc(self: ^Consumer) {
@@ -52,81 +52,48 @@ open :: proc(
 	conn: Conn,
 	ok: bool,
 ) {
-	cb :: proc(conn: Conn, ok: bool, ud: rawptr) {
-		os := transmute(async.One_Shot(Pair(Conn, bool)))(ud)
-		async.send(os, Pair(Conn, bool){conn, ok})
+	cb :: proc(op: ^Operation) {
+		os := transmute(async.One_Shot(Pair(rawptr, bool)))(op.ud[0])
+		async.send(os, Pair(rawptr, bool){op.open.conn, op.open.ok})
 	}
 
+	os := async.create_one_shot(Pair(rawptr, bool))
 	path := strings.clone(path)
-	os := async.create_one_shot(Pair(Conn, bool))
-	ud := transmute(rawptr)(os)
+	defer if !ok do delete(path)
 
-	task := Task(Open_Data, Open_Callback) {
-		out_ch = self.out_ch,
-		ud = ud,
-		cb = cb,
-		data = Open_Data{path = path, open_flag = open_flag},
+	op := create_operation()
+	op.out_ch = self.out_ch
+	op.ud[0] = transmute(rawptr)(os)
+	op.cb = cb
+	op.type = .Open
+	op.open = Open {
+		path      = path,
+		open_flag = open_flag,
 	}
-
-	ok = send(self, task)
-	if !ok {
-		delete(path)
-		return {}, false
-	}
+	chan.send(self.in_ch, op) or_return
 
 	res := async.recv(os)
-	return res.a, res.b
+	if res.b do return Conn{self, res.a, path, open_flag}, true
+	else do return {}, false
 }
 
 poll :: proc(self: ^Consumer, timeout: time.Duration = NO_TIMEOUT) {
 	start := time.now()
 	for {
-		msg := chan.try_recv(self.out_ch) or_break
-		dispatch(self, &msg)
+		op := chan.try_recv(self.out_ch) or_break
+		op.cb(op)
 		if time.since(start) >= timeout do break
 	}
 }
 
 drain :: proc(self: ^Consumer) {
 	for {
-		resp := chan.try_recv(self.out_ch) or_break
-		dispatch(self, &resp)
+		op := chan.try_recv(self.out_ch) or_break
+		op.cb(op)
 	}
 }
 
 @(private)
-dispatch :: proc(self: ^Consumer, resp: ^Response) {
-	switch &m in resp {
-	case Open_Response:
-		if m.ok do m.cb(Conn{self, m.conn, m.path, m.open_flag}, m.ok, m.ud)
-		else {
-			delete(m.path)
-			m.cb({}, m.ok, m.ud)
-		}
-	case Close_Response:
-		m.cb(m.ud)
-	case Exec_Response:
-		m.cb(m.rc, m.ud)
-	case Fetch_Response:
-		m.cb(m.rc, m.ud)
-	case Batch_Insert_Response:
-		m.cb(m.rc, m.ud)
-	case Transaction_Response:
-		if m.ok {
-			conn := Conn {
-				aslet = self,
-				conn  = m.conn,
-			}
-			m.cb(Transaction{false, conn}, true, m.ud)
-		} else do m.cb({}, false, m.ud)
-	case Rollback_Response:
-		m.cb(m.ok, m.ud)
-	case Commit_Response:
-		m.cb(m.ok, m.ud)
-	}
-}
-
-@(private)
-send :: #force_inline proc(self: ^Consumer, req: Request) -> bool {
-	return chan.send(self.in_ch, req)
+create_operation :: proc() -> ^Operation {
+	return new(Operation, allocator = runtime.default_allocator())
 }

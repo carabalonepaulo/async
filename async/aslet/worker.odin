@@ -12,11 +12,11 @@ DEFAULT_CAPACITY :: 1024
 
 Worker :: struct {
 	th:    ^thread.Thread,
-	in_ch: chan.Chan(Request),
+	in_ch: chan.Chan(^Operation),
 }
 
 init :: proc(self: ^Worker, cap: int = DEFAULT_CAPACITY) -> (err: mem.Allocator_Error) {
-	input := chan.create_buffered(chan.Chan(Request), cap, context.allocator) or_return
+	input := chan.create_buffered(chan.Chan(^Operation), cap, context.allocator) or_return
 	defer if err != nil do chan.destroy(&input)
 
 	self.in_ch = input
@@ -38,7 +38,7 @@ create_consumer :: proc(
 	consumer: ^Consumer,
 	err: mem.Allocator_Error,
 ) {
-	out_ch := chan.create_buffered(chan.Chan(Response), cap, context.allocator) or_return
+	out_ch := chan.create_buffered(chan.Chan(^Operation), cap, context.allocator) or_return
 	defer if err != nil do chan.destroy(&out_ch)
 
 	consumer = new(Consumer, runtime.default_allocator()) or_return
@@ -55,104 +55,84 @@ create_consumer :: proc(
 }
 
 @(private)
-worker_run :: proc(input_ch: chan.Chan(Request)) {
+worker_run :: proc(input_ch: chan.Chan(^Operation)) {
 	for {
 		msg := chan.recv(input_ch) or_break
-		switch &m in msg {
-		case Open_Request:
-			on_open_request(&m)
-		case Close_Request:
-			on_close_request(&m)
-		case Exec_Request:
-			on_exec_request(&m)
-		case Fetch_Request:
-			on_fetch_request(&m)
-		case Batch_Insert_Request:
-			on_batch_insert_request(&m)
-		case Transaction_Request:
-			on_transaction_request(&m)
-		case Rollback_Request:
-			on_rollback_request(&m)
-		case Commit_Request:
-			on_commit_request(&m)
+		switch msg.type {
+		case .Open:
+			on_open_request(&msg.open)
+		case .Close:
+			on_close_request(&msg.close)
+		case .Batch_Insert:
+			on_batch_insert_request(&msg.batch_insert)
+		case .Exec:
+			on_exec_request(&msg.exec)
+		case .Fetch:
+			on_fetch_request(&msg.fetch)
+		case .Transcation:
+			on_transaction_request(&msg.transaction)
+		case .Rollback:
+			on_rollback_request(&msg.rollback)
+		case .Commit:
+			on_commit_request(&msg.commit)
 		}
+		chan.send(msg.out_ch, msg)
 	}
 }
 
 @(private = "file")
-on_open_request :: proc(req: ^Open_Request) {
-	conn := hl.open(req.data.path, req.data.open_flag)
-	msg := Open_Response {
-		path      = req.data.path,
-		open_flag = req.data.open_flag,
-		ud        = req.ud,
-		cb        = req.cb,
-	}
-
+on_open_request :: proc(req: ^Open) {
+	conn := hl.open(req.path, req.open_flag)
 	if conn != nil {
-		msg.ok = true
-		msg.conn = conn
+		req.ok = true
+		req.conn = conn
 	}
-
-	chan.send(req.out_ch, msg)
 }
 
 @(private = "file")
-on_close_request :: proc(req: ^Close_Request) {
-	hl.close((^hl.Conn)(req.data.conn))
-	chan.send(req.out_ch, Close_Response{ud = req.ud, cb = req.cb})
+on_close_request :: proc(req: ^Close) {
+	hl.close((^hl.Conn)(req.conn))
 }
 
 @(private = "file")
-on_exec_request :: proc(req: ^Exec_Request) {
-	conn := (^hl.Conn)(req.data.conn)
-	rc := hl.exec(conn, req.data.sql, req.data.params)
-	chan.send(req.out_ch, Exec_Response{rc = rc, ud = req.ud, cb = req.cb})
+on_exec_request :: proc(req: ^Exec) {
+	conn := (^hl.Conn)(req.conn)
+	req.rc = hl.exec(conn, req.sql, req.params)
 }
 
 @(private = "file")
-on_fetch_request :: proc(req: ^Fetch_Request) {
-	conn := (^hl.Conn)(req.data.conn)
-	rc := req.data.run(conn, req.data.sql, req.data.params, req.data.out, req.data.limit)
-	chan.send(req.out_ch, Fetch_Response{rc = rc, ud = req.ud, cb = req.cb})
+on_fetch_request :: proc(req: ^Fetch) {
+	conn := (^hl.Conn)(req.conn)
+	req.rc = req.run(conn, req.sql, req.params, req.out, req.limit)
 }
 
 @(private = "file")
-on_batch_insert_request :: proc(req: ^Batch_Insert_Request) {
-	conn := (^hl.Conn)(req.data.conn)
-	rc := hl.batch_insert(conn, req.data.sql, req.data.params)
-	chan.send(req.out_ch, Batch_Insert_Response{rc = rc, ud = req.ud, cb = req.cb})
+on_batch_insert_request :: proc(req: ^Batch_Insert) {
+	conn := (^hl.Conn)(req.conn)
+	req.rc = hl.batch_insert(conn, req.sql, req.params)
 }
 
 @(private = "file")
-on_transaction_request :: proc(req: ^Transaction_Request) {
-	conn := hl.open(req.data.path, req.data.open_flag)
-	resp := Transaction_Response {
-		ok = false,
-		ud = req.ud,
-		cb = req.cb,
-	}
-	defer chan.send(req.out_ch, resp)
+on_transaction_request :: proc(req: ^Transaction_OP) {
+	conn := hl.open(req.path, req.open_flag)
 	if conn == nil do return
 
-	if hl.begin(conn, req.data.mode) == .Ok {
-		resp.conn = conn
-		resp.ok = true
+	if hl.begin(conn, req.mode) == .Ok {
+		req.conn = conn
+		req.ok = true
 	} else do hl.close(conn)
 }
 
 @(private = "file")
-on_rollback_request :: proc(req: ^Rollback_Request) {
-	conn := (^hl.Conn)(req.data.conn)
-	rc := hl.rollback(conn)
+on_rollback_request :: proc(req: ^Rollback) {
+	conn := (^hl.Conn)(req.conn)
+	req.ok = hl.rollback(conn) == .Ok
 	hl.close(conn)
-	chan.send(req.out_ch, Rollback_Response{ok = rc == .Ok, ud = req.ud, cb = req.cb})
 }
 
 @(private = "file")
-on_commit_request :: proc(req: ^Commit_Request) {
-	conn := (^hl.Conn)(req.data.conn)
-	rc := hl.commit(conn)
+on_commit_request :: proc(req: ^Commit) {
+	conn := (^hl.Conn)(req.conn)
+	req.ok = hl.commit(conn) == .Ok
 	hl.close(conn)
-	chan.send(req.out_ch, Commit_Response{ok = rc == .Ok, ud = req.ud, cb = req.cb})
 }
