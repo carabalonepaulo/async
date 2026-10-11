@@ -2,7 +2,6 @@ package async_hl
 
 import "core:bytes"
 import "core:c"
-import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:reflect"
@@ -204,13 +203,16 @@ fetch_single :: proc(
 	count := 0
 
 	res := sqlite.step(stmt)
-	if res != .Row do return res
-	cols := sqlite.column_count(stmt)
-	for i in 0 ..< cols {
-		write_field_from_stmt(out, &fields_info[i], stmt, i, allocator)
+	#partial switch res {
+	case .Done:
+		return .Not_Found
+	case .Row:
+		cols := sqlite.column_count(stmt)
+		for i in 0 ..< cols do write_field_from_stmt(out, &fields_info[i], stmt, i, allocator)
+		return .Ok
+	case:
+		return res
 	}
-
-	return .Ok
 }
 
 get_last_error :: proc(self: ^Conn, allocator := context.allocator) -> string {
@@ -567,4 +569,3 @@ test_fetch_single :: proc(t: ^testing.T) {
 	delete(p.name)
 	delete(p.thing)
 }
-
