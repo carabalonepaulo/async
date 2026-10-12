@@ -50,7 +50,7 @@ Value :: union {
 	i64,
 	f64,
 	string,
-	[dynamic]u8,
+	[]u8,
 }
 
 Transaction_Mode :: enum {
@@ -316,7 +316,7 @@ get_fields_info :: proc($T: typeid) -> [dynamic]Field_Info {
 		name := reflect.struct_tag_lookup(field.tag, "sqlite") or_else field.name
 
 		type, ok := field_type_from_type_id(field.type.id)
-		assert(ok, "invalid field, expecting one of: i32, i64, f64, [dynamic]u8, bool, string")
+		assert(ok, "invalid field, expecting one of: i32, i64, f64, []u8, bool, string")
 
 		fields[i] = {
 			name   = name,
@@ -336,7 +336,7 @@ field_type_from_type_id :: proc(id: typeid) -> (Field_Type, bool) {
 		return .I64, true
 	case typeid_of(f64):
 		return .F64, true
-	case typeid_of([dynamic]u8):
+	case typeid_of([]u8):
 		return .Blob, true
 	case typeid_of(bool):
 		return .Bool, true
@@ -395,8 +395,8 @@ write_field_from_stmt :: proc(
 	case .Blob:
 		n := sqlite.column_bytes(stmt, col_idx)
 		slice := ([^]u8)(sqlite.column_blob(stmt, col_idx))[:n]
-		value := make([dynamic]u8, 0, n, allocator = allocator)
-		append(&value, ..slice)
+		value := make([]u8, len(slice))
+		copy_slice(value, slice)
 		write_field(v, field, value)
 	case .Bool:
 		value := sqlite.column_int(stmt, col_idx) == 1
@@ -425,8 +425,8 @@ write_field_from_stmt :: proc(
 		case .Blob:
 			n := sqlite.column_bytes(stmt, col_idx)
 			slice := ([^]u8)(sqlite.column_blob(stmt, col_idx))[:n]
-			value := make([dynamic]u8, 0, n, allocator = allocator)
-			append(&value, ..slice)
+			value := make([]u8, len(slice))
+			copy_slice(value, slice)
 			write_field(v, field, Value(value))
 		case .Null:
 			write_field(v, field, Value(nil))
@@ -452,7 +452,7 @@ test_aslet :: proc(t: ^testing.T) {
 	Person :: struct {
 		name:  string,
 		age:   i32,
-		thing: [dynamic]u8,
+		thing: []u8,
 	}
 	out := make([dynamic]Person)
 	fetch(conn, FETCH_QUERY, {}, &out)
@@ -462,7 +462,7 @@ test_aslet :: proc(t: ^testing.T) {
 	p := out[0]
 	testing.expect(t, p.name == "Soreto")
 	testing.expect(t, p.age == i32(29))
-	testing.expect(t, bytes.equal(p.thing[:], blob[:]))
+	testing.expect(t, bytes.equal(p.thing, blob[:]))
 
 	delete(p.name)
 	delete(p.thing)
@@ -531,12 +531,12 @@ test_value :: proc(t: ^testing.T) {
 	p := out[0]
 	testing.expect(t, p.name.(string) == "Soreto")
 	testing.expect(t, p.age == nil)
-	testing.expect(t, bytes.equal(p.thing.([dynamic]u8)[:], blob[:]))
+	testing.expect(t, bytes.equal(p.thing.([]u8)[:], blob[:]))
 
 	if str, ok := p.name.(string); ok {
 		delete(str)
 	}
-	if blob, ok := p.thing.([dynamic]u8); ok {
+	if blob, ok := p.thing.([]u8); ok {
 		delete(blob)
 	}
 	delete(out)
@@ -557,14 +557,14 @@ test_fetch_single :: proc(t: ^testing.T) {
 	Person :: struct {
 		name:  string,
 		age:   i32,
-		thing: [dynamic]u8,
+		thing: []u8,
 	}
 	p: Person
 	fetch_single(conn, FETCH_QUERY, {}, &p)
 
 	testing.expect(t, p.name == "Soreto")
 	testing.expect(t, p.age == i32(29))
-	testing.expect(t, bytes.equal(p.thing[:], blob[:]))
+	testing.expect(t, bytes.equal(p.thing, blob[:]))
 
 	delete(p.name)
 	delete(p.thing)
