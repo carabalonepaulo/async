@@ -1,5 +1,6 @@
 package async_aslet
 
+import "core:mem"
 import "core:sync/chan"
 
 import "hl"
@@ -30,6 +31,8 @@ Specifics :: struct #raw_union {
 	batch_insert: Batch_Insert,
 	exec:         Exec,
 	fetch:        Fetch,
+	fetch_single: Fetch,
+	fetch_scalar: Fetch,
 	transaction:  Transaction_OP,
 	rollback:     Rollback,
 	commit:       Commit,
@@ -41,6 +44,8 @@ Type :: enum {
 	Batch_Insert,
 	Exec,
 	Fetch,
+	Fetch_Single,
+	Fetch_Scalar,
 	Transaction,
 	Rollback,
 	Commit,
@@ -80,14 +85,15 @@ Exec :: struct {
 
 Fetch :: struct {
 	// request
-	conn:   rawptr,
-	sql:    string,
-	params: []Param,
-	out:    rawptr,
-	limit:  int,
-	run:    proc(conn: ^hl.Conn, sql: string, params: []Param, out: rawptr, limit: int) -> Result,
+	conn:      rawptr,
+	sql:       string,
+	params:    []Param,
+	out:       rawptr,
+	limit:     int,
+	run:       proc(self: ^Fetch) -> Result,
+	allocator: mem.Allocator,
 	// response
-	rc:     Result,
+	rc:        Result,
 }
 
 Transaction_OP :: struct {

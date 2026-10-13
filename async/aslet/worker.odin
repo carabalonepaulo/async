@@ -88,6 +88,10 @@ worker_run :: proc(input_ch: chan.Chan(^Operation)) {
 			on_exec_request(&msg.exec)
 		case .Fetch:
 			on_fetch_request(&msg.fetch)
+		case .Fetch_Single:
+			on_fetch_request(&msg.fetch_single)
+		case .Fetch_Scalar:
+			on_fetch_request(&msg.fetch_scalar)
 		case .Transaction:
 			on_transaction_request(&msg.transaction)
 		case .Rollback:
@@ -126,8 +130,7 @@ on_exec_request :: proc(req: ^Exec) {
 
 @(private = "file")
 on_fetch_request :: proc(req: ^Fetch) {
-	conn := (^hl.Conn)(req.conn)
-	req.rc = req.run(conn, req.sql, req.params, req.out, req.limit)
+	req.rc = req.run(req)
 }
 
 @(private = "file")

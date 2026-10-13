@@ -3,6 +3,7 @@ package async_aslet
 import "base:intrinsics"
 import "base:runtime"
 import "core:container/pool"
+import "core:mem"
 import "core:sync/chan"
 
 import ".."
@@ -123,15 +124,14 @@ prep_fetch :: proc(
 	limit: int,
 	cb: Callback,
 ) -> ^Operation {
-	run :: proc(
-		conn: ^hl.Conn,
-		sql: string,
-		params: []Param,
-		out: rawptr,
-		limit: int,
-	) -> hl.Result {
-		typed_out := (^[dynamic]T)(out)
-		return hl.fetch(conn, sql, params, typed_out, limit)
+	run :: proc(self: ^Fetch) -> hl.Result {
+		return hl.fetch(
+			(^hl.Conn)(self.conn),
+			self.sql,
+			self.params,
+			(^[dynamic]T)(self.out),
+			self.limit,
+		)
 	}
 
 	op := prep(self, .Fetch, cb)
@@ -142,6 +142,70 @@ prep_fetch :: proc(
 		out    = out,
 		limit  = limit,
 		run    = run,
+	}
+	return op
+}
+
+@(private)
+prep_fetch_single :: proc(
+	self: ^Consumer,
+	conn: rawptr,
+	sql: string,
+	params: []Param,
+	out: ^$T,
+	cb: Callback,
+	allocator: mem.Allocator,
+) -> ^Operation {
+	run :: proc(self: ^Fetch) -> hl.Result {
+		return hl.fetch_single(
+			(^hl.Conn)(self.conn),
+			self.sql,
+			self.params,
+			(^T)(self.out),
+			self.allocator,
+		)
+	}
+
+	op := prep(self, .Fetch_Single, cb)
+	op.fetch_single = Fetch {
+		conn      = conn,
+		sql       = sql,
+		params    = params,
+		out       = out,
+		run       = run,
+		allocator = allocator,
+	}
+	return op
+}
+
+@(private)
+prep_fetch_scalar :: proc(
+	self: ^Consumer,
+	conn: rawptr,
+	sql: string,
+	params: []Param,
+	out: ^$T,
+	cb: Callback,
+	allocator: mem.Allocator,
+) -> ^Operation {
+	run :: proc(self: ^Fetch) -> hl.Result {
+		return hl.fetch_scalar(
+			(^hl.Conn)(self.conn),
+			self.sql,
+			self.params,
+			(^T)(self.out),
+			self.allocator,
+		)
+	}
+
+	op := prep(self, .Fetch_Scalar, cb)
+	op.fetch_scalar = Fetch {
+		conn      = conn,
+		sql       = sql,
+		params    = params,
+		out       = out,
+		run       = run,
+		allocator = allocator,
 	}
 	return op
 }

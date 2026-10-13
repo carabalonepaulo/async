@@ -59,6 +59,42 @@ conn_fetch :: proc(
 	return try(op, cancel, Result, Result.Ok, Result.Abort) or_return
 }
 
+conn_fetch_single :: proc(
+	self: ^Conn,
+	sql: string,
+	params: []Param = nil,
+	out: ^$T,
+	cancel: Maybe(async.Cancel_Token) = nil,
+	allocator := context.allocator,
+) -> Result {
+	cb :: proc(op: ^Operation) {
+		os := transmute(async.One_Shot(Result))(op.ud[0])
+		async.send(os, op.fetch.rc)
+	}
+
+	op := prep_fetch_single(self.aslet, self.conn, sql, params, out, cb, allocator)
+	if !send(self.aslet, op) do return .Error
+	return try(op, cancel, Result, Result.Ok, Result.Abort) or_return
+}
+
+conn_fetch_scalar :: proc(
+	self: ^Conn,
+	sql: string,
+	params: []Param = nil,
+	out: ^$T,
+	cancel: Maybe(async.Cancel_Token) = nil,
+	allocator := context.allocator,
+) -> Result {
+	cb :: proc(op: ^Operation) {
+		os := transmute(async.One_Shot(Result))(op.ud[0])
+		async.send(os, op.fetch.rc)
+	}
+
+	op := prep_fetch_scalar(self.aslet, self.conn, sql, params, out, cb, allocator)
+	if !send(self.aslet, op) do return .Error
+	return try(op, cancel, Result, Result.Ok, Result.Abort) or_return
+}
+
 close :: proc(self: ^Conn) -> Result {
 	cb :: proc(op: ^Operation) {
 		handle := transmute(async.Handle)(op.ud[0])
@@ -82,7 +118,7 @@ Transaction :: struct {
 
 transaction :: proc(
 	self: ^Conn,
-	mode: Transaction_Mode,
+	mode: Transaction_Mode = .Deferred,
 	cancel: Maybe(async.Cancel_Token) = nil,
 ) -> (
 	transaction: Transaction,
@@ -150,6 +186,30 @@ transaction_fetch :: proc(
 	return conn_fetch(&self.conn, sql, params, out, limit, cancel)
 }
 
+transaction_fetch_single :: proc(
+	self: ^Transaction,
+	sql: string,
+	params: []Param,
+	out: ^$T,
+	cancel: Maybe(async.Cancel_Token) = nil,
+	allocator := context.allocator,
+) -> Result {
+	if self.used do return .Abort
+	return conn_fetch_single(&self.conn, sql, params, out, cancel, allocator)
+}
+
+transaction_fetch_scalar :: proc(
+	self: ^Transaction,
+	sql: string,
+	params: []Param,
+	out: ^$T,
+	cancel: Maybe(async.Cancel_Token) = nil,
+	allocator := context.allocator,
+) -> Result {
+	if self.used do return .Abort
+	return conn_fetch_scalar(&self.conn, sql, params, out, cancel, allocator)
+}
+
 exec :: proc {
 	conn_exec,
 	transaction_exec,
@@ -158,4 +218,14 @@ exec :: proc {
 fetch :: proc {
 	conn_fetch,
 	transaction_fetch,
+}
+
+fetch_single :: proc {
+	conn_fetch_single,
+	transaction_fetch_single,
+}
+
+fetch_scalar :: proc {
+	conn_fetch_scalar,
+	transaction_fetch_scalar,
 }

@@ -1,6 +1,7 @@
 package main
 
 import "core:fmt"
+import "core:sync/chan"
 
 import "../async"
 import "../async/aslet"
@@ -14,6 +15,8 @@ CREATE :: `create table person (
 INSERT :: `insert into person (name, age) values (?1, ?2);`
 
 SELECT :: `select * from person;`
+
+SELECT_SCALAR :: `select age from person`
 
 sqlite_task :: proc(a: ^aslet.Consumer) {
 	cancel := async.create_cancel_token()
@@ -32,9 +35,25 @@ sqlite_task :: proc(a: ^aslet.Consumer) {
 		age:  i32,
 	}
 
-	out := make([dynamic]Person, allocator = context.temp_allocator)
+	context.allocator = context.temp_allocator
+
+	out := make([dynamic]Person)
 	assert(aslet.fetch(&conn, SELECT, {}, &out) == .Ok)
-	fmt.println("[sqlite]", out)
+	fmt.println("[sqlite] fetch", out)
+
+	person: Person
+	assert(aslet.fetch_single(&conn, SELECT, {}, &person) == .Ok)
+	fmt.println("[sqlite] fetch single", person)
+
+	age: i64
+	assert(aslet.fetch_scalar(&conn, SELECT_SCALAR, {}, &age) == .Ok)
+	fmt.println("[sqlite] fetch scalar", age)
+
+	tx, ok := aslet.transaction(&conn)
+	assert(ok)
+	assert(aslet.fetch_single(&tx, SELECT, {}, &person) == .Ok)
+	assert(aslet.fetch_scalar(&tx, SELECT_SCALAR, {}, &age) == .Ok)
+	aslet.rollback(&tx)
 }
 
 sqlite_demo :: proc() {
