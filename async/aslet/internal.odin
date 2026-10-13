@@ -54,9 +54,15 @@ try :: proc(
 }
 
 @(private)
-prep :: proc(self: ^Consumer, type: Type, cb: Callback) -> ^Operation {
+prep :: proc(
+	self: ^Consumer,
+	type: Type,
+	cb: Callback,
+	run: proc(spec: ^Specifics),
+) -> ^Operation {
 	self.pending += 1
 	op := pool.get(self.pool)
+	op.run = run
 	op.out_ch = self.out_ch
 	op.type = type
 	op.cb = cb
@@ -71,7 +77,20 @@ prep_open :: proc(
 	open_flag: Open_Flag,
 	cb: Callback,
 ) -> ^Operation {
-	op := prep(self, .Open, cb)
+	run :: proc(req: ^Open) {
+		conn := hl.open(req.path, req.open_flag)
+		if conn != nil {
+			req.ok = true
+			req.conn = Conn {
+				aslet     = req.consumer,
+				conn      = conn,
+				path      = req.path,
+				open_flag = req.open_flag,
+			}
+		}
+	}
+
+	op := prep(self, .Open, cb, auto_cast run)
 	op.open = Open {
 		consumer  = self,
 		path      = path,
@@ -88,7 +107,12 @@ prep_batch_insert :: proc(
 	params: [][]Param,
 	cb: Callback,
 ) -> ^Operation {
-	op := prep(self, .Batch_Insert, cb)
+	run :: proc(req: ^Batch_Insert) {
+		conn := (^hl.Conn)(req.conn)
+		req.rc = hl.batch_insert(conn, req.sql, req.params)
+	}
+
+	op := prep(self, .Batch_Insert, cb, auto_cast run)
 	op.batch_insert = Batch_Insert {
 		conn   = conn,
 		sql    = sql,
@@ -105,7 +129,12 @@ prep_exec :: proc(
 	params: []Param,
 	cb: Callback,
 ) -> ^Operation {
-	op := prep(self, .Exec, cb)
+	run :: proc(req: ^Exec) {
+		conn := (^hl.Conn)(req.conn)
+		req.rc = hl.exec(conn, req.sql, req.params)
+	}
+
+	op := prep(self, .Exec, cb, auto_cast run)
 	op.exec = Exec {
 		conn   = conn,
 		sql    = sql,
@@ -124,24 +153,23 @@ prep_fetch :: proc(
 	limit: int,
 	cb: Callback,
 ) -> ^Operation {
-	run :: proc(self: ^Fetch) -> hl.Result {
-		return hl.fetch(
-			(^hl.Conn)(self.conn),
-			self.sql,
-			self.params,
-			(^[dynamic]T)(self.out),
-			self.limit,
+	run :: proc(req: ^Fetch) {
+		req.rc = hl.fetch(
+			(^hl.Conn)(req.conn),
+			req.sql,
+			req.params,
+			(^[dynamic]T)(req.out),
+			req.limit,
 		)
 	}
 
-	op := prep(self, .Fetch, cb)
+	op := prep(self, .Fetch, cb, auto_cast run)
 	op.fetch = Fetch {
 		conn   = conn,
 		sql    = sql,
 		params = params,
 		out    = out,
 		limit  = limit,
-		run    = run,
 	}
 	return op
 }
@@ -156,23 +184,22 @@ prep_fetch_single :: proc(
 	cb: Callback,
 	allocator: mem.Allocator,
 ) -> ^Operation {
-	run :: proc(self: ^Fetch) -> hl.Result {
-		return hl.fetch_single(
-			(^hl.Conn)(self.conn),
-			self.sql,
-			self.params,
-			(^T)(self.out),
-			self.allocator,
+	run :: proc(req: ^Fetch) {
+		req.rc = hl.fetch_single(
+			(^hl.Conn)(req.conn),
+			req.sql,
+			req.params,
+			(^T)(req.out),
+			req.allocator,
 		)
 	}
 
-	op := prep(self, .Fetch_Single, cb)
+	op := prep(self, .Fetch_Single, cb, auto_cast run)
 	op.fetch_single = Fetch {
 		conn      = conn,
 		sql       = sql,
 		params    = params,
 		out       = out,
-		run       = run,
 		allocator = allocator,
 	}
 	return op
@@ -188,23 +215,22 @@ prep_fetch_scalar :: proc(
 	cb: Callback,
 	allocator: mem.Allocator,
 ) -> ^Operation {
-	run :: proc(self: ^Fetch) -> hl.Result {
-		return hl.fetch_scalar(
-			(^hl.Conn)(self.conn),
-			self.sql,
-			self.params,
-			(^T)(self.out),
-			self.allocator,
+	run :: proc(req: ^Fetch) {
+		req.rc = hl.fetch_scalar(
+			(^hl.Conn)(req.conn),
+			req.sql,
+			req.params,
+			(^T)(req.out),
+			req.allocator,
 		)
 	}
 
-	op := prep(self, .Fetch_Scalar, cb)
+	op := prep(self, .Fetch_Scalar, cb, auto_cast run)
 	op.fetch_scalar = Fetch {
 		conn      = conn,
 		sql       = sql,
 		params    = params,
 		out       = out,
-		run       = run,
 		allocator = allocator,
 	}
 	return op
@@ -212,7 +238,11 @@ prep_fetch_scalar :: proc(
 
 @(private)
 prep_close :: proc(self: ^Consumer, conn: rawptr, cb: Callback) -> ^Operation {
-	op := prep(self, .Close, cb)
+	run :: proc(req: ^Close) {
+		hl.close((^hl.Conn)(req.conn))
+	}
+
+	op := prep(self, .Close, cb, auto_cast run)
 	op.close = Close{conn}
 	return op
 }
@@ -225,7 +255,20 @@ prep_transaction :: proc(
 	mode: Transaction_Mode,
 	cb: Callback,
 ) -> ^Operation {
-	op := prep(self, .Transaction, cb)
+	run :: proc(req: ^Transaction_OP) {
+		conn := hl.open(req.path, req.open_flag)
+		if conn == nil do return
+
+		if hl.begin(conn, req.mode) == .Ok {
+			req.transaction = Transaction {
+				used = false,
+				conn = Conn{aslet = req.consumer, conn = conn},
+			}
+			req.ok = true
+		} else do hl.close(conn)
+	}
+
+	op := prep(self, .Transaction, cb, auto_cast run)
 	op.transaction = Transaction_OP {
 		consumer  = self,
 		path      = path,
@@ -237,7 +280,13 @@ prep_transaction :: proc(
 
 @(private)
 prep_rollback :: proc(self: ^Consumer, conn: rawptr, cb: Callback) -> ^Operation {
-	op := prep(self, .Rollback, cb)
+	run :: proc(req: ^Rollback) {
+		conn := (^hl.Conn)(req.conn)
+		req.ok = hl.rollback(conn) == .Ok
+		hl.close(conn)
+	}
+
+	op := prep(self, .Rollback, cb, auto_cast run)
 	op.rollback = Rollback {
 		conn = conn,
 	}
@@ -246,7 +295,13 @@ prep_rollback :: proc(self: ^Consumer, conn: rawptr, cb: Callback) -> ^Operation
 
 @(private)
 prep_commit :: proc(self: ^Consumer, conn: rawptr, cb: Callback) -> ^Operation {
-	op := prep(self, .Commit, cb)
+	run :: proc(req: ^Commit) {
+		conn := (^hl.Conn)(req.conn)
+		req.ok = hl.commit(conn) == .Ok
+		hl.close(conn)
+	}
+
+	op := prep(self, .Commit, cb, auto_cast run)
 	op.commit = Commit {
 		conn = conn,
 	}

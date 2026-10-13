@@ -21,6 +21,7 @@ Operation :: struct {
 	cb:              Callback,
 	state:           State,
 	type:            Type,
+	run:             proc(spec: ^Specifics),
 	using specifics: Specifics,
 	_link:           ^Operation,
 }
@@ -90,7 +91,6 @@ Fetch :: struct {
 	params:    []Param,
 	out:       rawptr,
 	limit:     int,
-	run:       proc(self: ^Fetch) -> Result,
 	allocator: mem.Allocator,
 	// response
 	rc:        Result,

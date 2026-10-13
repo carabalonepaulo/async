@@ -8,7 +8,6 @@ import "core:sync/chan"
 import "core:thread"
 
 import ".."
-import "hl"
 
 DEFAULT_CAPACITY :: 4096
 
@@ -27,7 +26,7 @@ init :: proc(self: ^Worker, cap: int = DEFAULT_CAPACITY) -> (err: mem.Allocator_
 	defer if err != nil do pool.destroy(&op_pool)
 
 	self.in_ch = input
-	self.th = thread.create_and_start_with_poly_data(input, worker_run)
+	self.th = thread.create_and_start_with_poly_data(input, run)
 	self.pool = op_pool
 
 	return .None
@@ -67,102 +66,17 @@ create_consumer :: proc(
 }
 
 @(private)
-worker_run :: proc(input_ch: chan.Chan(^Operation)) {
+run :: proc(input_ch: chan.Chan(^Operation)) {
 	for {
-		msg := chan.recv(input_ch) or_break
+		op := chan.recv(input_ch) or_break
 
-		_, ok := intrinsics.atomic_compare_exchange_strong(&msg.state, .Pending, .Claimed)
+		_, ok := intrinsics.atomic_compare_exchange_strong(&op.state, .Pending, .Claimed)
 		if !ok {
-			chan.send(msg.out_ch, msg)
+			chan.send(op.out_ch, op)
 			continue
 		}
 
-		switch msg.type {
-		case .Open:
-			on_open_request(&msg.open)
-		case .Close:
-			on_close_request(&msg.close)
-		case .Batch_Insert:
-			on_batch_insert_request(&msg.batch_insert)
-		case .Exec:
-			on_exec_request(&msg.exec)
-		case .Fetch:
-			on_fetch_request(&msg.fetch)
-		case .Fetch_Single:
-			on_fetch_request(&msg.fetch_single)
-		case .Fetch_Scalar:
-			on_fetch_request(&msg.fetch_scalar)
-		case .Transaction:
-			on_transaction_request(&msg.transaction)
-		case .Rollback:
-			on_rollback_request(&msg.rollback)
-		case .Commit:
-			on_commit_request(&msg.commit)
-		}
-		chan.send(msg.out_ch, msg)
+		op.run(&op.specifics)
+		chan.send(op.out_ch, op)
 	}
-}
-
-@(private = "file")
-on_open_request :: proc(req: ^Open) {
-	conn := hl.open(req.path, req.open_flag)
-	if conn != nil {
-		req.ok = true
-		req.conn = Conn {
-			aslet     = req.consumer,
-			conn      = conn,
-			path      = req.path,
-			open_flag = req.open_flag,
-		}
-	}
-}
-
-@(private = "file")
-on_close_request :: proc(req: ^Close) {
-	hl.close((^hl.Conn)(req.conn))
-}
-
-@(private = "file")
-on_exec_request :: proc(req: ^Exec) {
-	conn := (^hl.Conn)(req.conn)
-	req.rc = hl.exec(conn, req.sql, req.params)
-}
-
-@(private = "file")
-on_fetch_request :: proc(req: ^Fetch) {
-	req.rc = req.run(req)
-}
-
-@(private = "file")
-on_batch_insert_request :: proc(req: ^Batch_Insert) {
-	conn := (^hl.Conn)(req.conn)
-	req.rc = hl.batch_insert(conn, req.sql, req.params)
-}
-
-@(private = "file")
-on_transaction_request :: proc(req: ^Transaction_OP) {
-	conn := hl.open(req.path, req.open_flag)
-	if conn == nil do return
-
-	if hl.begin(conn, req.mode) == .Ok {
-		req.transaction = Transaction {
-			used = false,
-			conn = Conn{aslet = req.consumer, conn = conn},
-		}
-		req.ok = true
-	} else do hl.close(conn)
-}
-
-@(private = "file")
-on_rollback_request :: proc(req: ^Rollback) {
-	conn := (^hl.Conn)(req.conn)
-	req.ok = hl.rollback(conn) == .Ok
-	hl.close(conn)
-}
-
-@(private = "file")
-on_commit_request :: proc(req: ^Commit) {
-	conn := (^hl.Conn)(req.conn)
-	req.ok = hl.commit(conn) == .Ok
-	hl.close(conn)
 }
