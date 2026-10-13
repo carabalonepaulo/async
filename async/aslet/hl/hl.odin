@@ -2,6 +2,7 @@ package async_hl
 
 import "core:bytes"
 import "core:c"
+import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:reflect"
@@ -215,6 +216,33 @@ fetch_single :: proc(
 	}
 }
 
+fetch_scalar :: proc(
+	self: ^Conn,
+	sql: string,
+	params: []Param = nil,
+	out: ^$T,
+	allocator := context.allocator,
+) -> Result {
+	stmt := get_stmt(self, sql) or_return
+	bind(&stmt, params)
+	defer {
+		sqlite.reset(stmt)
+		sqlite.clear_bindings(stmt)
+	}
+
+	res := sqlite.step(stmt)
+	#partial switch res {
+	case .Done:
+		return .Not_Found
+	case .Row:
+		cols := sqlite.column_count(stmt)
+		if cols != 1 do return .Mismatch
+		return write_value(stmt, 0, out, allocator) ? .Ok : .Misuse
+	case:
+		return res
+	}
+}
+
 get_last_error :: proc(self: ^Conn, allocator := context.allocator) -> string {
 	err_cstr := sqlite.errmsg(self.db)
 	return strings.clone_from_cstring(err_cstr, allocator)
@@ -298,13 +326,47 @@ bind_param_at :: #force_inline proc(
 	return .Ok
 }
 
-
 @(private)
 bind :: proc(stmt: ^^sqlite.Statement, values: []Param) -> sqlite.Result_Code {
 	for &value, i in values {
 		bind_param_at(stmt, value, i + 1) or_return
 	}
 	return .Ok
+}
+
+@(private)
+write_value :: proc(
+	stmt: ^sqlite.Statement,
+	col_idx: i32,
+	dst: ^$T,
+	allocator := context.allocator,
+) -> (
+	ok: bool,
+) {
+	ptr := rawptr(dst)
+	switch typeid_of(T) {
+	case i64:
+		value := sqlite.column_int64(stmt, col_idx)
+		(^i64)(ptr)^ = value
+	case f64:
+		value := sqlite.column_double(stmt, col_idx)
+		(^f64)(ptr)^ = value
+	case string:
+		value := strings.clone_from_cstring(
+			sqlite.column_text(stmt, col_idx),
+			allocator = allocator,
+		)
+		(^string)(ptr)^ = value
+	case []u8:
+		n := sqlite.column_bytes(stmt, col_idx)
+		slice := ([^]u8)(sqlite.column_blob(stmt, col_idx))[:n]
+		value := make([]u8, len(slice), allocator = allocator)
+		copy_slice(value, slice)
+		(^[]u8)(ptr)^ = value
+	case:
+		return false
+	}
+	return true
 }
 
 @(private)
@@ -425,7 +487,7 @@ write_field_from_stmt :: proc(
 		case .Blob:
 			n := sqlite.column_bytes(stmt, col_idx)
 			slice := ([^]u8)(sqlite.column_blob(stmt, col_idx))[:n]
-			value := make([]u8, len(slice))
+			value := make([]u8, len(slice), allocator = allocator)
 			copy_slice(value, slice)
 			write_field(v, field, Value(value))
 		case .Null:
@@ -568,4 +630,51 @@ test_fetch_single :: proc(t: ^testing.T) {
 
 	delete(p.name)
 	delete(p.thing)
+}
+
+@(test)
+test_fetch_scalar :: proc(t: ^testing.T) {
+	conn := open(":memory:")
+	defer close(conn)
+
+	exec(conn, "create table person (name text, age integer, thing blob);")
+
+	INSERT_QUERY :: "insert into person (name, age, thing) values (?1, ?2, ?3)"
+	blob := [3]u8{10, 20, 30}
+	exec(conn, INSERT_QUERY, {"Soreto", i32(29), blob[:]})
+
+	string_val: string
+	rc := fetch_scalar(conn, "select name from person", {}, &string_val, context.temp_allocator)
+	testing.expect(t, rc == .Ok)
+	testing.expect_value(t, string_val, "Soreto")
+
+	int_val: i64
+	rc = fetch_scalar(conn, "select age from person", {}, &int_val)
+	testing.expect(t, rc == .Ok)
+	testing.expect_value(t, int_val, 29)
+
+	blob_val: []u8
+	rc = fetch_scalar(conn, "select thing from person", {}, &blob_val, context.temp_allocator)
+	testing.expect(t, rc == .Ok)
+	testing.expect(t, bytes.equal(blob_val, blob[:]))
+}
+
+@(test)
+test_fetch_scalar_fail :: proc(t: ^testing.T) {
+	conn := open(":memory:")
+	defer close(conn)
+
+	exec(conn, "create table person (name text, age integer, thing blob);")
+
+	INSERT_QUERY :: "insert into person (name, age, thing) values (?1, ?2, ?3)"
+	blob := [3]u8{10, 20, 30}
+	exec(conn, INSERT_QUERY, {"Soreto", i32(29), blob[:]})
+
+	int_val: int
+	rc := fetch_scalar(conn, "select age from person", {}, &int_val)
+	testing.expect(t, rc == .Misuse)
+	testing.expect_value(t, int_val, 0)
+
+	rc = fetch_scalar(conn, "select name, age from person", {}, &int_val)
+	testing.expect(t, rc == .Mismatch)
 }
