@@ -285,13 +285,22 @@ create_desc :: proc(raw_fn: proc "c" (co: ^coro.Coro), ud: ^Internal_State) -> (
 	desc.allocator_data = ud
 	desc.alloc_cb = proc "c" (size: c.size_t, allocator_data: rawptr) -> rawptr {
 		context = runtime.default_context()
-		ud := (^Internal_State)(allocator_data)
-		buf, _ := vmem.reserve(uint(size))
-		return raw_data(buf)
+		when ODIN_DEBUG && ODIN_OS == .Windows {
+			ptr, _ := mem.alloc(int(size), allocator = runtime.default_allocator())
+			return ptr
+		} else {
+			ud := (^Internal_State)(allocator_data)
+			buf, _ := vmem.reserve(uint(size))
+			return raw_data(buf)
+		}
 	}
 	desc.dealloc_cb = proc "c" (ptr: rawptr, size: c.size_t, allocator_data: rawptr) {
 		context = runtime.default_context()
-		vmem.release((cast([^]u8)(ptr))[:size])
+		when ODIN_DEBUG && ODIN_OS == .Windows {
+			mem.free_with_size(ptr, int(size), allocator = runtime.default_allocator())
+		} else {
+			vmem.release((cast([^]u8)(ptr))[:size])
+		}
 	}
 	return
 }
