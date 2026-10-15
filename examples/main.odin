@@ -3,8 +3,8 @@ package main
 import "core:fmt"
 import "core:mem"
 
-import "../async"
-import "../async/io"
+import ".."
+import "../io"
 
 main :: proc() {
 	track: mem.Tracking_Allocator
@@ -34,19 +34,16 @@ main :: proc() {
 	io.init()
 	defer io.deinit()
 
-	// one_shot_demo()
-	// semaphore_demo()
-	// join_many_demo()
-	// join_demo()
-	sqlite_demo()
-	// http_server_demo()
-	// sock_demo()
-	// fs_demo()
-	// read_dir_demo()
-	// signal_demo()
-	// select_demo()
-	// ch_producer_consumer_demo()
-	// arg_demo()
-	// http_demo()
-	// sleep_demo()
+	one_shot_demo()
+	semaphore_demo()
+	join_many_demo()
+	join_demo()
+	sock_demo()
+	fs_demo()
+	read_dir_demo()
+	signal_demo()
+	select_demo()
+	ch_producer_consumer_demo()
+	arg_demo()
+	sleep_demo()
 }

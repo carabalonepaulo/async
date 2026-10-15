@@ -3,7 +3,7 @@ package main
 import "core:fmt"
 import "core:time"
 
-import "../async"
+import ".."
 
 @(private = "file")
 child_task :: proc() {

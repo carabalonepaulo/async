@@ -1,2 +1,0 @@
-run:
-    @-odin run demo

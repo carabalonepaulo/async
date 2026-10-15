@@ -3,8 +3,8 @@ package main
 import "core:fmt"
 import "core:os"
 
-import "../async"
-import "../async/io"
+import ".."
+import "../io"
 
 FILE_NAME :: "hello.txt"
 

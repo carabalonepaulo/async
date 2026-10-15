@@ -5,8 +5,8 @@ import "core:nbio"
 import "core:net"
 import "core:time"
 
-import "../async"
-import "../async/io"
+import ".."
+import "../io"
 
 sock_server :: proc() {
 	listener, err := io.listen_tcp({net.IP4_Any, 5059})

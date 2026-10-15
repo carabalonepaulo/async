@@ -2,7 +2,7 @@ package main
 
 import "core:fmt"
 
-import "../async"
+import ".."
 
 Person :: struct {
 	name: string,

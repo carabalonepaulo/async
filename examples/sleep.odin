@@ -3,7 +3,7 @@ package main
 import "core:fmt"
 import "core:time"
 
-import "../async"
+import ".."
 
 task :: proc(n: int) {
 	fmt.printfln("[task] sleeping for %vs...", n)

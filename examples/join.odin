@@ -3,7 +3,7 @@ package main
 import "core:fmt"
 import "core:time"
 
-import "../async"
+import ".."
 
 join_task_a :: proc() {
 	async.sleep(3 * time.Second)

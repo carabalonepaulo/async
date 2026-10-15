@@ -2,8 +2,8 @@ package main
 
 import "core:fmt"
 
-import "../async"
-import "../async/io"
+import ".."
+import "../io"
 
 @(private = "file")
 task :: proc(running: ^bool) {

@@ -3,7 +3,7 @@ package main
 import "core:fmt"
 import "core:time"
 
-import "../async"
+import ".."
 
 producer_a :: proc(ch: async.Chan(int)) {
 	async.sleep(5 * time.Millisecond)
