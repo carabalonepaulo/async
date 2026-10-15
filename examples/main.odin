@@ -1,0 +1,49 @@
+package main
+
+import "core:fmt"
+import "core:mem"
+
+import "../async"
+import "../async/io"
+
+main :: proc() {
+	track: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&track, context.allocator)
+	context.allocator = mem.tracking_allocator(&track)
+	defer {
+		if len(track.allocation_map) > 0 {
+			fmt.println("[track] leaks")
+			for _, value in track.allocation_map {
+				fmt.printfln("- %v bytes at %v", value.size, value.location)
+			}
+		}
+
+		if len(track.bad_free_array) > 0 {
+			fmt.println("[track] bad free")
+			for value in track.bad_free_array {
+				fmt.printfln("- %v", value.location)
+			}
+		}
+
+		mem.tracking_allocator_destroy(&track)
+	}
+
+	async.init()
+	defer async.deinit()
+
+	io.init()
+	defer io.deinit()
+
+	one_shot_demo()
+	semaphore_demo()
+	join_many_demo()
+	join_demo()
+	sock_demo()
+	fs_demo()
+	read_dir_demo()
+	signal_demo()
+	select_demo()
+	ch_producer_consumer_demo()
+	arg_demo()
+	sleep_demo()
+}
