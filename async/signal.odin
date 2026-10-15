@@ -1,12 +1,14 @@
 package async
 
+import "core:mem"
 @(private)
 Empty :: struct {}
 
 Signal :: distinct Chan(Empty)
 
-create_signal :: proc() -> Signal {
-	return (Signal)(create_chan(Empty))
+create_signal :: proc() -> (signal: Signal, err: mem.Allocator_Error) {
+	ch := create_chan(Empty) or_return
+	return (Signal)(ch), .None
 }
 
 signal_branch :: proc(self: Signal) -> Case {
@@ -29,4 +31,3 @@ signal_into_rawptr :: #force_inline proc(self: Signal) -> rawptr {
 signal_from_rawptr :: #force_inline proc(ptr: rawptr) -> Signal {
 	return (Signal)(Chan(Empty){id = transmute(u64)(ptr)})
 }
-

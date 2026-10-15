@@ -1,5 +1,6 @@
 package async_storage
 
+import "core:mem"
 INDEX_BITS :: 32
 INDEX_MASK :: (1 << INDEX_BITS) - 1
 
@@ -22,9 +23,16 @@ Storage :: struct($T: typeid) {
 	count: uint,
 }
 
-init :: proc(self: ^Storage($T), capacity := 0) {
-	self.slots = make([dynamic]Slot(T), 0, capacity)
-	self.free = make([dynamic]u32, 0, capacity)
+init :: proc(self: ^Storage($T), capacity := 0) -> (err: mem.Allocator_Error) {
+	defer if err != nil do self^ = {}
+
+	self.slots = make([dynamic]Slot(T), 0, capacity) or_return
+	defer if err != nil do delete(self.slots)
+
+	self.free = make([dynamic]u32, 0, capacity) or_return
+	defer if err != nil do delete(self.free)
+
+	return .None
 }
 
 deinit :: proc(self: ^Storage($T)) {
@@ -165,4 +173,3 @@ unpack_key :: proc(key: u64) -> (u32, u32) {
 	gen := u32(key >> INDEX_BITS)
 	return idx, gen
 }
-

@@ -1,6 +1,7 @@
 package async
 
 import "base:runtime"
+import "core:fmt"
 import "core:testing"
 import "storage"
 
@@ -27,14 +28,12 @@ create_one_shot :: proc($T: typeid) -> One_Shot(T) {
 	res := Resource{}
 	res.id = auto_cast Internal_Resource.One_Shot
 
-	sched := get_scheduler()
-	id := storage.add(&sched.resources, res)
+	id := add_resource(res)
 	return One_Shot(T){id = id}
 }
 
 one_shot_destroy :: proc(self: One_Shot($T)) {
-	sched := get_scheduler()
-	res, ok := storage.remove(&sched.resources, self.id)
+	res, ok := try_remove_resource(self.id)
 	assert(ok, "invalid one shot")
 
 	raw_inner: rawptr
@@ -43,7 +42,7 @@ one_shot_destroy :: proc(self: One_Shot($T)) {
 		raw_inner = load_inline(&res.ud, Inner_Inline_One_Shot(T))
 	} else {
 		inner := load_inline(&res.ud, Inner_One_Shot)
-		if inner.value != nil do free((^T)(inner.value), allocator = runtime.default_allocator())
+		if inner.value != nil do free((^T)(inner.value), allocator = scheduler.allocator)
 		raw_inner = inner
 	}
 
@@ -66,7 +65,7 @@ one_shot_try_send :: proc(self: One_Shot($T), value: T) -> (ok: bool) {
 		if inner.value != nil do return false
 		raw_inner = inner
 
-		inner.value = new(T, allocator = runtime.default_allocator())
+		inner.value = new(T, allocator = scheduler.allocator)
 		(^T)(inner.value)^ = value
 	}
 
@@ -257,4 +256,3 @@ test_regression :: proc(t: ^testing.T) {
 
 	block(primary)
 }
-

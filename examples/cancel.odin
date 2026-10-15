@@ -33,7 +33,7 @@ signal_select :: proc(ch: async.Chan(int), cancel: async.Cancel_Token) {
 }
 
 signal_demo :: proc() {
-	ch := async.create_chan(int); defer async.destroy(ch)
+	ch, _ := async.create_chan(int); defer async.destroy(ch)
 	cancel := async.create_cancel_token()
 	async.trigger(cancel)
 

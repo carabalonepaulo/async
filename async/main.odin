@@ -15,7 +15,7 @@ import "vmem"
 
 INITIAL_CAPACITY :: #config(ASYNC_INITIAL_CAPACITY, 64)
 
-RESOURCE_INLINE_STORAGE :: 24
+RESOURCE_INLINE_STORAGE :: 16
 CASE_INLINE_STORAGE :: 5
 
 DEFAULT_STACK_SIZE :: #config(ASYNC_DEFAULT_STACK_SIZE, 2 * mem.Megabyte)
@@ -81,23 +81,38 @@ Scheduler :: struct {
 	active_coroutines: uint,
 	time_wheel:        tw.Time_Wheel,
 	finished:          [dynamic]tw.Task,
+	allocator:         mem.Allocator,
 }
 
 @(private, thread_local)
 scheduler: Scheduler
 
-scheduler_init :: proc() {
-	storage.init(&scheduler.resources, INITIAL_CAPACITY)
-	storage.init(&scheduler.refs, INITIAL_CAPACITY)
-	queue.init(&scheduler.scheduled)
-	queue.init(&scheduler.ready)
+scheduler_init :: proc(allocator := context.allocator) -> (err: mem.Allocator_Error) {
+	defer if err != .None do scheduler = {}
+
+	storage.init(&scheduler.resources, INITIAL_CAPACITY) or_return
+	defer if err != .None do storage.deinit(&scheduler.resources)
+
+	storage.init(&scheduler.refs, INITIAL_CAPACITY) or_return
+	defer if err != .None do storage.deinit(&scheduler.refs)
+
+	queue.init(&scheduler.scheduled) or_return
+	defer if err != .None do queue.destroy(&scheduler.scheduled)
+
+	queue.init(&scheduler.ready) or_return
+	defer if err != .None do queue.destroy(&scheduler.ready)
 
 	tw.init(&scheduler.time_wheel, 1 * time.Millisecond)
-	scheduler.finished = make([dynamic]tw.Task)
+	scheduler.finished = make([dynamic]tw.Task) or_return
+	defer if err != .None do delete(scheduler.finished)
+
+	scheduler.allocator = allocator
+
+	return .None
 }
 
 scheduler_deinit :: proc() {
-	queue.destroy(&scheduler.scheduled)
+	context.allocator = scheduler.allocator
 
 	storage.retain(&scheduler.resources, nil, proc(id: u64, res: ^Resource, ud: rawptr) -> bool {
 		if res.drop != nil {
@@ -109,6 +124,7 @@ scheduler_deinit :: proc() {
 	})
 	assert(storage.count(&scheduler.resources) == 0, "scheduler has active resources")
 
+	queue.destroy(&scheduler.scheduled)
 	queue.destroy(&scheduler.ready)
 	storage.deinit(&scheduler.resources)
 	storage.deinit(&scheduler.refs)
@@ -152,7 +168,7 @@ poll :: proc() {
 		if coro.status(ud.co) == .Dead {
 			try_remove_resource(handle)
 			coro.check(coro.destroy(ud.co))
-			free(ud)
+			free(ud, scheduler.allocator)
 			scheduler.active_coroutines -= 1
 		}
 	}
@@ -259,11 +275,11 @@ get_pending :: #force_inline proc() -> uint {
 
 @(private)
 create_ud :: proc(fn: rawptr, args: u64 = 0) -> ^Internal_State {
+	context.allocator = scheduler.allocator
 	entry := storage.entry(&scheduler.resources)
 
 	ud := new(Internal_State)
 	ud.ctx = context
-	ud.co = new(coro.Coro)
 	ud.fn = fn
 	ud.id = storage.get_id(&entry)
 	ud.args = args

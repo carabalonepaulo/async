@@ -1,6 +1,7 @@
 package async
 
 import "core:container/queue"
+import "core:mem"
 import "core:testing"
 
 CHAN_INITIAL_CAPACITY :: 16
@@ -16,26 +17,28 @@ Chan :: struct($T: typeid) {
 	_marker: [0]T,
 }
 
-create_chan :: proc($T: typeid, cap: int = CHAN_INITIAL_CAPACITY) -> Chan(T) {
-	res := Resource {
-		id = auto_cast Internal_Resource.Channel,
-	}
-
-	inner := load_inline(&res.ud, Inner_Chan(T))
+create_chan :: proc(
+	$T: typeid,
+	cap: int = CHAN_INITIAL_CAPACITY,
+) -> (
+	ch: Chan(T),
+	err: mem.Allocator_Error,
+) {
+	inner := new(Inner_Chan(T), scheduler.allocator) or_return
 	init_waiters(&inner.waiters)
 	queue.init(&inner.items, cap)
 
-	id := add_resource(res)
-	return Chan(T){id = id}
+	ref := add_ref(inner)
+	return Chan(T){id = ref.id}, .None
 }
 
 chan_destroy :: proc(self: Chan($T)) {
-	res, ok := try_remove_resource(self.id)
+	inner, ok := try_remove_ref(Ref(Inner_Chan(T)){id = self.id})
 	assert(ok, "attempt to destroy invalid channel")
 
-	inner := load_inline(&res.ud, Inner_Chan(T))
 	deinit_waiters(&inner.waiters)
 	queue.destroy(&inner.items)
+	free(inner, scheduler.allocator)
 }
 
 chan_try_send :: proc(self: Chan($T), value: T) -> (ok: bool) {
@@ -106,7 +109,7 @@ chan_branch :: proc(self: Chan($T), out: ^T = nil, out_ok: ^bool = nil) -> Case 
 		//
 		is_alive = proc(self: ^Case) -> bool {
 			state := load_inline(&self.ud, State)
-			_, ok := try_get_resource(state.ch.id)
+			_, ok := try_get_ref(Ref(Inner_Chan(T)){id = state.ch.id})
 			return ok
 		},
 		try = proc(self: ^Case) -> bool {
@@ -154,8 +157,7 @@ chan_from_rawptr :: #force_inline proc($T: typeid, ptr: rawptr) -> Chan(T) {
 
 @(private = "file")
 try_get_inner :: proc(self: Chan($T)) -> (inner: ^Inner_Chan(T), ok: bool) {
-	res := try_get_resource(self.id) or_return
-	return load_inline(&res.ud, Inner_Chan(T)), true
+	return try_get_ref(Ref(Inner_Chan(T)){id = self.id})
 }
 
 @(private = "file")
@@ -170,7 +172,7 @@ test_normal :: proc(t: ^testing.T) {
 	init()
 	defer deinit()
 
-	ch := create_chan(int)
+	ch, _ := create_chan(int)
 	defer chan_destroy(ch)
 
 	VALUE :: 123
@@ -197,7 +199,7 @@ test_fail_to_recv :: proc(t: ^testing.T) {
 	init()
 	defer deinit()
 
-	ch := create_chan(int)
+	ch, _ := create_chan(int)
 
 	consumer :: proc(t: ^testing.T, ch: Chan(int)) {
 		value, ok := chan_recv(ch)
@@ -219,7 +221,7 @@ test_try_recv :: proc(t: ^testing.T) {
 
 	VALUE :: 123
 
-	ch := create_chan(int)
+	ch, _ := create_chan(int)
 	defer chan_destroy(ch)
 
 	chan_send(ch, VALUE)
@@ -236,7 +238,7 @@ test_try_send_success :: proc(t: ^testing.T) {
 
 	VALUE :: 123
 
-	ch := create_chan(int)
+	ch, _ := create_chan(int)
 	defer chan_destroy(ch)
 
 	consumer :: proc(t: ^testing.T, ch: Chan(int)) {
@@ -264,7 +266,7 @@ test_try_send_fail :: proc(t: ^testing.T) {
 
 	VALUE :: 123
 
-	ch := create_chan(int)
+	ch, _ := create_chan(int)
 	defer chan_destroy(ch)
 
 	producer :: proc(t: ^testing.T, ch: Chan(int)) {
@@ -283,7 +285,7 @@ test_chan_select_alone_win :: proc(t: ^testing.T) {
 
 	VALUE :: 123
 
-	ch := create_chan(int)
+	ch, _ := create_chan(int)
 	defer chan_destroy(ch)
 
 	consumer :: proc(t: ^testing.T, ch: Chan(int)) {
@@ -306,4 +308,3 @@ test_chan_select_alone_win :: proc(t: ^testing.T) {
 			join_many(handles)
 		}))
 }
-

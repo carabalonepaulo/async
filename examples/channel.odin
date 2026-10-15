@@ -23,7 +23,7 @@ ch_consumer :: proc(ch: async.Chan(int)) {
 }
 
 ch_producer_consumer_demo :: proc() {
-	ch := async.create_chan(int); defer async.destroy(ch)
+	ch, _ := async.create_chan(int); defer async.destroy(ch)
 
 	consumer := async.spawn(ch, ch_consumer)
 	async.spawn(ch, ch_producer)

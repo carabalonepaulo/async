@@ -43,8 +43,8 @@ consumer_select :: proc(ch_a, ch_b: async.Chan(int)) {
 }
 
 select_demo :: proc() {
-	ch_a := async.create_chan(int); defer async.destroy(ch_a)
-	ch_b := async.create_chan(int); defer async.destroy(ch_b)
+	ch_a, _ := async.create_chan(int); defer async.destroy(ch_a)
+	ch_b, _ := async.create_chan(int); defer async.destroy(ch_b)
 
 	async.spawn(ch_a, producer_a)
 	async.spawn(ch_b, producer_b)
